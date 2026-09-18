@@ -54,7 +54,12 @@ ACTIVE
 COMPLETED
 CANCELLED
 REFUNDED
-ARCHIVED
+```
+
+归档独立使用：
+
+```text
+archived: boolean
 ```
 
 含义：
@@ -82,10 +87,6 @@ ARCHIVED
 ### REFUNDED
 
 整单已退款结束。
-
-### ARCHIVED
-
-用户主动归档，不再参与日常待办。
 
 ---
 
@@ -563,8 +564,6 @@ CANCELLED
 
 REFUNDED
 
-ARCHIVED
-
 ACTIVE
 ```
 
@@ -578,8 +577,6 @@ ACTIVE
 CANCELLED
 
 REFUNDED
-
-ARCHIVED
 
 PAYMENT_OVERDUE
 
@@ -740,13 +737,7 @@ OrderStatus = COMPLETED
 
 # 25. 订单自动完成规则
 
-推荐调用：
-
-```text
-refresh_order_status(orderId)
-```
-
-时判断。
+推荐在 `OrderService.refreshStatus(orderId, userId)` 中统一判断。
 
 完成条件：
 
@@ -859,7 +850,13 @@ Order.status = REFUNDED
 
 # 30. ARCHIVED
 
-归档仅影响：
+归档只使用：
+
+```text
+archived = true
+```
+
+它仅影响：
 
 ```text
 日常列表
@@ -867,43 +864,13 @@ Order.status = REFUNDED
 统计默认范围
 ```
 
-不删除数据。
+不改变订单业务终态，也不删除数据。
 
-建议：
-
-```text
-archived = true
-```
-
-与：
+正式实现中：
 
 ```text
-status = ARCHIVED
+OrderStatus 不包含 ARCHIVED
 ```
-
-V0.1 二选一即可。
-
-更推荐只保留一个来源，避免重复状态。
-
-当前已有：
-
-```text
-status = ARCHIVED
-+
-archived boolean
-```
-
-后续正式实现时建议删掉其中一个。
-
-建议保留：
-
-```text
-archived boolean
-```
-
-OrderStatus 删掉 `ARCHIVED`。
-
-这是当前数据库方案里值得优化的一点。
 
 ---
 
@@ -2210,13 +2177,13 @@ Dashboard
 订单完成
 ```
 
-的关键动作，尽量通过：
+的关键动作统一通过 NestJS Service 处理，并在需要时使用：
 
-```text
-RPC
+```ts
+prisma.$transaction(...)
 ```
 
-处理。
+保证原子性。
 
 避免前端分别：
 

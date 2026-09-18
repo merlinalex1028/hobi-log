@@ -2,26 +2,46 @@
 
 ## 1. 技术前提
 
+正式架构：
+
 ```text
-Frontend
-Vue 3 + TypeScript + Vite + Element Plus
-
-Backend / Database
-Supabase
-
-Database
-PostgreSQL
-
-Storage
-Supabase Storage
-
-Auth
-Supabase Auth
+Vue 3 + TypeScript + Vite
+          ↓ REST API
+NestJS + Prisma
+          ↓
+Supabase PostgreSQL
 ```
 
-后续出现 OCR、邮件解析、定时提醒、物流同步等功能后，再增加 NestJS。
+辅助能力：
 
----
+```text
+Supabase Auth
+Supabase Storage
+```
+
+Web 不再直接查询业务表。
+
+数据库 SQL 仍用于表达表结构和索引，但正式开发时以：
+
+```text
+prisma/schema.prisma
++
+Prisma Migrate
+```
+
+作为 Schema 与 Migration 的主维护方式。
+
+NestJS 通过 Supabase PostgreSQL 数据库连接串访问数据库。
+
+推荐配置：
+
+```text
+DATABASE_URL
+用于应用运行，可使用 Supabase Pooler。
+
+DIRECT_URL
+用于 Prisma migration 等直连场景。
+```
 
 ## 2. 数据库关系
 
@@ -578,46 +598,46 @@ $$;
 
 ---
 
-# 17. RLS
+# 17. 数据库访问与安全模型
 
-必须从第一天开启 RLS。
+正式架构下：
 
-示例：
-
-```sql
-alter table public.products enable row level security;
-alter table public.orders enable row level security;
-alter table public.platforms enable row level security;
-alter table public.stores enable row level security;
+```text
+浏览器不会直接查询 public.orders / payments / products 等业务表。
 ```
 
-Product 示例：
+访问链路：
 
-```sql
-create policy "users can read own products"
-on public.products
-for select
-using (auth.uid() = user_id);
-
-create policy "users can create own products"
-on public.products
-for insert
-with check (auth.uid() = user_id);
-
-create policy "users can update own products"
-on public.products
-for update
-using (auth.uid() = user_id);
-
-create policy "users can delete own products"
-on public.products
-for delete
-using (auth.uid() = user_id);
+```text
+Vue
+↓ Supabase Access Token
+NestJS AuthGuard
+↓ 当前 userId
+Service
+↓ Prisma
+PostgreSQL
 ```
 
-子表如 payments 可通过 order 反查 user_id。
+业务权限的第一责任在 NestJS。
 
----
+所有 Service 查询必须显式限定：
+
+```ts
+userId
+```
+
+例如：
+
+```ts
+await prisma.order.findFirst({
+  where: {
+    id: orderId,
+    userId,
+  },
+})
+```
+
+数据库层可以继续做防御性权限收紧，但不再把 RLS 当作业务鉴权主逻辑，也不再允许前端直接 CRUD 核心业务表。
 
 # 18. order_summary View
 
@@ -912,38 +932,49 @@ amount = null
 
 ---
 
-# 27. create_order RPC
+# 27. 创建订单事务
 
-建议新建订单使用 Postgres Function / RPC，避免前端多次 insert 造成脏数据。
-
-前端提交：
-
-```json
-{
-  "order": {},
-  "items": [],
-  "payments": [],
-  "release": {}
-}
-```
-
-数据库事务内：
+旧版使用 PostgreSQL：
 
 ```text
-创建 Order
-↓
-创建 OrderItems
-↓
-创建 Payments
-↓
-创建 EXPECTED_RELEASE
-↓
-创建 ORDER_CREATED Event
+create_order RPC
 ```
 
-任一步失败全部回滚。
+正式架构改为：
 
----
+```text
+POST /api/orders
+```
+
+调用：
+
+```text
+OrderController.create()
+↓
+OrderService.create()
+↓
+prisma.$transaction(...)
+```
+
+事务内完成：
+
+```text
+Order
+OrderItems
+Payments
+Expected Release
+```
+
+业务规则由 TypeScript Service 维护，方便后续接入：
+
+```text
+定时提醒
+物流 API
+邮件解析
+OCR
+通知
+Webhook
+```
 
 # 28. 订单详情原型
 
@@ -1224,60 +1255,62 @@ REFUND 299
 
 ---
 
-# 36. 前端 API 划分
+# 36. 前后端 API 划分
+
+前端：
 
 ```text
-api/
+src/api/
+├─ http.ts
 ├─ order.api.ts
 ├─ product.api.ts
 ├─ payment.api.ts
 ├─ release.api.ts
 ├─ shipment.api.ts
 ├─ platform.api.ts
+├─ attachment.api.ts
 └─ statistics.api.ts
 ```
 
-Order API：
+后端：
 
-```ts
-getOrderList(params)
-getOrderDetail(id)
-createOrder(data)
-updateOrder(id, data)
-cancelOrder(id)
-deleteOrder(id)
-duplicateOrder(id)
+```text
+apps/server/src/modules/
+├─ auth/
+├─ product/
+├─ order/
+├─ payment/
+├─ release/
+├─ shipment/
+├─ platform/
+├─ store/
+├─ attachment/
+├─ statistics/
+└─ notification/
 ```
 
-Payment API：
+核心 REST：
 
-```ts
-createPayment()
-updatePayment()
-markPaymentPaid()
-refundPayment()
-deletePayment()
+```text
+GET    /api/orders
+POST   /api/orders
+GET    /api/orders/:id
+PATCH  /api/orders/:id
+POST   /api/orders/:id/cancel
+
+POST   /api/orders/:id/payments
+POST   /api/payments/:id/paid
+POST   /api/payments/:id/refund
+
+POST   /api/orders/:id/release/delay
+POST   /api/orders/:id/release/released
+
+POST   /api/orders/:id/shipments
+PATCH  /api/shipments/:id
+POST   /api/shipments/:id/delivered
+
+GET    /api/statistics/dashboard
 ```
-
-Release API：
-
-```ts
-addExpectedRelease()
-delayRelease()
-markReleased()
-markStoreArrived()
-```
-
-Shipment API：
-
-```ts
-createShipment()
-updateShipment()
-updateShipmentStatus()
-markDelivered()
-```
-
----
 
 # 37. CreateOrderPayload
 
@@ -1317,30 +1350,31 @@ FormModel 与数据库类型分离。
 
 # 38. Storage
 
-建议 Bucket：
+Supabase Storage 继续使用，但文件权限由 NestJS 控制。
+
+推荐：
+
+```text
+Vue
+↓ 请求 signed upload URL
+NestJS
+↓ 校验 userId / target / MIME / size
+Supabase Storage
+↓ signed URL
+Vue
+↓ 直接上传
+NestJS
+↓ 写 Attachment 元数据
+```
+
+Bucket：
 
 ```text
 product-images
 attachments
 ```
 
-路径：
-
-```text
-product-images:
-userId/productId/cover.webp
-
-attachments:
-userId/orderId/uuid.png
-```
-
-图片建议：
-
-- 最大 5MB
-- JPEG / PNG / WEBP
-- 前端压缩最长边 1600px
-
----
+这样既避免大文件全部经过 Server，又保留后端权限控制。
 
 # 39. 初始平台数据
 

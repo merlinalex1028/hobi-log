@@ -2,6 +2,8 @@
 
 > 本文档用于指导 HobiLog V0.1 前端页面结构、组件边界、Props / Emits 设计、布局和交互拆分。
 
+正式架构下，页面只通过 `apps/web/src/api/*` 调用 NestJS REST API，不直接访问业务数据库。
+
 ---
 
 # 1. 页面总览
@@ -1495,7 +1497,7 @@ Drawer：
 触发事件
 ```
 
-不要让展示组件直接请求 Supabase。
+不要让展示组件直接请求 NestJS API，更不能直接访问 Supabase 业务表。页面 / composable 统一调用 `apps/web/src/api/*`。
 
 ---
 

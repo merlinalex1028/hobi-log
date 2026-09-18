@@ -824,7 +824,9 @@ HKD
 
 ---
 
-## 31. Vue3 技术栈
+## 31. 正式技术栈
+
+### Web
 
 ```text
 Vue 3
@@ -838,94 +840,113 @@ FullCalendar
 VueUse
 dayjs
 Zod
-Supabase JS
+Axios
+TanStack Query（推荐）
 ```
 
----
-
-## 32. 推荐目录结构
+### Server
 
 ```text
-src/
-
-├─ api/
-│   ├─ order.ts
-│   ├─ product.ts
-│   ├─ payment.ts
-│   ├─ shipment.ts
-│   ├─ platform.ts
-│   └─ statistics.ts
-│
-├─ assets/
-│
-├─ components/
-│   ├─ common/
-│   │   ├─ AppPageHeader.vue
-│   │   ├─ AppEmpty.vue
-│   │   ├─ AppStatusTag.vue
-│   │   ├─ AppCurrency.vue
-│   │   └─ AppImage.vue
-│   │
-│   ├─ product/
-│   │   ├─ ProductCard.vue
-│   │   ├─ ProductSelector.vue
-│   │   └─ ProductForm.vue
-│   │
-│   ├─ order/
-│   │   ├─ OrderCard.vue
-│   │   ├─ OrderTable.vue
-│   │   ├─ OrderStatus.vue
-│   │   ├─ OrderAmount.vue
-│   │   └─ OrderTimeline.vue
-│   │
-│   ├─ payment/
-│   │   ├─ PaymentList.vue
-│   │   ├─ PaymentItem.vue
-│   │   ├─ PaymentForm.vue
-│   │   └─ PaymentProgress.vue
-│   │
-│   ├─ release/
-│   │   ├─ ReleaseTimeline.vue
-│   │   └─ ReleaseDelayDialog.vue
-│   │
-│   └─ shipment/
-│       ├─ ShipmentList.vue
-│       └─ ShipmentForm.vue
-│
-├─ composables/
-│   ├─ useOrder.ts
-│   ├─ usePayment.ts
-│   ├─ useCurrency.ts
-│   ├─ useDate.ts
-│   └─ useOrderStatus.ts
-│
-├─ constants/
-│   ├─ order.ts
-│   ├─ payment.ts
-│   ├─ product.ts
-│   └─ status.ts
-│
-├─ layouts/
-│   └─ DefaultLayout.vue
-│
-├─ pages/
-│   ├─ dashboard/
-│   ├─ orders/
-│   ├─ products/
-│   ├─ collection/
-│   ├─ calendar/
-│   ├─ statistics/
-│   ├─ platforms/
-│   └─ settings/
-│
-├─ router/
-├─ stores/
-├─ types/
-├─ utils/
-└─ main.ts
+NestJS
+TypeScript
+Prisma
+class-validator / class-transformer
+Supabase JWT Guard
+Swagger / OpenAPI
 ```
 
----
+### Infrastructure
+
+```text
+Supabase Auth
+Supabase PostgreSQL
+Supabase Storage
+```
+
+前端只直接使用 Supabase Auth 完成登录并取得 Access Token。
+
+所有 HobiLog 业务数据通过：
+
+```text
+Vue → NestJS REST API → Prisma → PostgreSQL
+```
+
+访问。
+
+## 32. 推荐 Monorepo 目录结构
+
+```text
+hobilog/
+
+├─ apps/
+│  ├─ web/
+│  │  ├─ src/
+│  │  │  ├─ api/
+│  │  │  ├─ assets/
+│  │  │  ├─ components/
+│  │  │  ├─ composables/
+│  │  │  ├─ constants/
+│  │  │  ├─ layouts/
+│  │  │  ├─ pages/
+│  │  │  ├─ router/
+│  │  │  ├─ stores/
+│  │  │  ├─ types/
+│  │  │  └─ utils/
+│  │  └─ package.json
+│  │
+│  └─ server/
+│     ├─ src/
+│     │  ├─ common/
+│     │  ├─ config/
+│     │  ├─ database/
+│     │  ├─ modules/
+│     │  │  ├─ auth/
+│     │  │  ├─ product/
+│     │  │  ├─ order/
+│     │  │  ├─ payment/
+│     │  │  ├─ release/
+│     │  │  ├─ shipment/
+│     │  │  ├─ platform/
+│     │  │  ├─ store/
+│     │  │  ├─ attachment/
+│     │  │  ├─ statistics/
+│     │  │  └─ notification/
+│     │  ├─ app.module.ts
+│     │  └─ main.ts
+│     └─ package.json
+│
+├─ packages/
+│  └─ shared/
+│     └─ src/
+│        ├─ enums/
+│        ├─ types/
+│        ├─ constants/
+│        └─ schemas/
+│
+├─ prisma/
+│  ├─ schema.prisma
+│  └─ migrations/
+│
+├─ docs/
+├─ pnpm-workspace.yaml
+└─ package.json
+```
+
+核心原则：
+
+```text
+apps/web
+只负责前端。
+
+apps/server
+拥有业务逻辑、鉴权与数据库事务。
+
+packages/shared
+保存前后端共同使用的稳定枚举、类型和常量。
+
+prisma
+是业务数据库 Schema 与 Migration 的主要来源。
+```
 
 ## 33. Pinia 原则
 
@@ -943,7 +964,48 @@ Pinia 只保存：
 
 ---
 
-## 34. 核心 TypeScript 类型
+## 34. 后端业务层职责
+
+NestJS 不只是数据库代理层。
+
+核心职责：
+
+```text
+AuthGuard
+验证 Supabase Access Token，并把 userId 注入 Request。
+
+OrderService
+创建 / 编辑 / 取消订单，维护 OrderItem 和付款节点事务。
+
+PaymentService
+标记付款、退款、补差价、计算付款状态。
+
+ReleaseService
+预计出货、延期、厂商出货、店铺到货。
+
+ShipmentService
+物流、拆单、签收、物流状态。
+
+StatisticsService
+Dashboard 与统计聚合。
+
+AttachmentService
+生成上传签名、附件元数据和删除逻辑。
+
+NotificationService
+后续负责尾款提醒、邮件、Bark / Telegram 等。
+```
+
+所有查询都必须绑定当前：
+
+```text
+userId
+```
+
+避免依赖前端传入用户 ID。
+
+
+## 35. 核心 TypeScript 类型
 
 ```ts
 export interface Order {

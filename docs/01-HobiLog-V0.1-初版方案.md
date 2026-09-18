@@ -612,27 +612,93 @@ Dashboard
 
 ## 21. 技术方案
 
-前端：
+V0.1 正式采用前后端分离架构：
 
-- Vue 3
-- TypeScript
-- Vite
-- Pinia
-- Vue Router
-- Element Plus
-- ECharts
-- FullCalendar
+```text
+Vue 3 Web
+   │
+   │ HTTPS / REST API
+   │ Authorization: Bearer <Supabase Access Token>
+   ↓
+NestJS Server
+   │
+   ├─ Auth Guard
+   ├─ Product Service
+   ├─ Order Service
+   ├─ Payment Service
+   ├─ Release Service
+   ├─ Shipment Service
+   ├─ Statistics Service
+   └─ Notification Service
+   │
+   ├──────── Prisma ────────→ Supabase PostgreSQL
+   │
+   └──────── Storage SDK ───→ Supabase Storage
+```
 
-V0.1 后端与数据：
+认证继续使用：
 
-- Supabase
-- PostgreSQL
-- Supabase Auth
-- Supabase Storage
+```text
+Supabase Auth
+```
 
-后续复杂化后可增加 NestJS。
+职责划分：
 
----
+```text
+Vue3
+负责页面、表单、交互、客户端展示状态。
+
+NestJS
+负责权限校验、业务规则、事务、统计 API、文件签名、后续定时任务与第三方服务。
+
+Prisma
+负责数据库访问、事务和 Schema 管理。
+
+Supabase PostgreSQL
+负责数据持久化。
+
+Supabase Storage
+负责商品图片、订单截图等对象存储。
+
+Supabase Auth
+负责登录、注册、Access Token。
+```
+
+前端不再直接操作业务表，也不再把核心业务依赖 PostgreSQL RPC。
+
+复杂事务，例如：
+
+```text
+创建订单
+标记付款
+取消订单
+退款
+延期
+创建物流
+签收
+```
+
+统一进入 NestJS Service，通过：
+
+```ts
+prisma.$transaction(...)
+```
+
+保证一致性。
+
+推荐 monorepo：
+
+```text
+hobilog/
+├─ apps/
+│  ├─ web/
+│  └─ server/
+├─ packages/
+│  └─ shared/
+├─ prisma/
+├─ docs/
+└─ pnpm-workspace.yaml
+```
 
 ## 22. 核心数据库表
 
