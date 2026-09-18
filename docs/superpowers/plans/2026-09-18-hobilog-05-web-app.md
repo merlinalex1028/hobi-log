@@ -19,7 +19,7 @@
 - 服务端业务数据不进 Pinia（`docs/02 §33`）：Pinia 只存用户、全局配置、筛选条件、视图偏好。
 - 组件通信只用 props / emits；子组件不直接改 Pinia、不直接调 API。
 - 桌面优先：`>= 1280px` 保证「侧栏 + 主内容 + 右侧 Aside」完整展示；`< 1024px` 时 Aside 落回普通流。
-- `apps/web` 环境变量只允许 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` / `VITE_API_BASE_URL`；禁止出现 service role key。
+- `apps/web` 环境变量只允许 `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` / `VITE_API_BASE_URL`；禁止出现 secret key。
 - 提交策略同 P1：`git commit` 步骤仅在用户授权时执行。
 
 ---
@@ -179,7 +179,7 @@ export default defineConfig({
 ```env
 VITE_API_BASE_URL=http://localhost:3000/api
 VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
+VITE_SUPABASE_PUBLISHABLE_KEY=
 ```
 
 `apps/web/src/env.d.ts`:
@@ -196,7 +196,7 @@ declare module '*.vue' {
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string
   readonly VITE_SUPABASE_URL: string
-  readonly VITE_SUPABASE_ANON_KEY: string
+  readonly VITE_SUPABASE_PUBLISHABLE_KEY: string
 }
 
 interface ImportMeta {
@@ -425,7 +425,7 @@ import { createClient } from '@supabase/supabase-js'
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
   { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } },
 )
 ```

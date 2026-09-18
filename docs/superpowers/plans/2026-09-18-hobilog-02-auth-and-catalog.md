@@ -12,7 +12,7 @@
 
 沿用 roadmap 全局约束。P2 追加：
 
-- `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` 从 P2 起成为**必填**环境变量；`SUPABASE_SERVICE_ROLE_KEY` 只允许出现在 `apps/server`，禁止进入任何 `VITE_` 变量（前端只用 anon key）。
+- `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY` 从 P2 起成为**必填**环境变量；`SUPABASE_SECRET_KEY` 只允许出现在 `apps/server`，禁止进入任何 `VITE_` 变量（前端只用 publishable key）。
 - 校验 Token 使用 `supabase.auth.getUser(token)`；服务端另建 service-role client 供 P4 的 Storage 使用。
 - 认证失败统一 `401 + code = UNAUTHORIZED`；越权访问统一按 `404 + code = NOT_FOUND` 返回，不暴露「存在但不属于你」。
 - 金额出口一律 `number`，日期出口一律 ISO 字符串（`YYYY-MM-DD` 用于 `@db.Date`，完整 ISO 用于 timestamp）。
@@ -40,7 +40,7 @@
 - Consumes: `validateEnv`（P1 Task 4）、`BusinessException`（P1 Task 6）
 - Produces:
   - `AuthUser { id: string; email?: string }`
-  - `SupabaseService.getUserFromToken(token: string): Promise<AuthUser>`；`SupabaseService.admin: SupabaseClient`（service role）
+  - `SupabaseService.getUserFromToken(token: string): Promise<AuthUser>`；`SupabaseService.admin: SupabaseClient`（secret key）
   - `extractBearerToken(header?: string): string | null`
   - `IS_PUBLIC_KEY` / `@Public()`
   - `AuthModule`（`@Global()`，导出 `SupabaseService`）
@@ -54,8 +54,8 @@ const validRaw = {
   DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/hobilog',
   DIRECT_URL: 'postgresql://postgres:postgres@localhost:5432/hobilog',
   SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_ANON_KEY: 'anon-key',
-  SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+  SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
+  SUPABASE_SECRET_KEY: 'sb_secret_test',
 }
 ```
 
@@ -64,7 +64,7 @@ const validRaw = {
 ```ts
 it('同时缺少多项时全部列出', () => {
   expect(() => validateEnv({})).toThrow(
-    'MISSING_ENV: DATABASE_URL, DIRECT_URL, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY',
+    'MISSING_ENV: DATABASE_URL, DIRECT_URL, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY',
   )
 })
 ```
@@ -80,8 +80,8 @@ const REQUIRED_KEYS = [
   'DATABASE_URL',
   'DIRECT_URL',
   'SUPABASE_URL',
-  'SUPABASE_ANON_KEY',
-  'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_PUBLISHABLE_KEY',
+  'SUPABASE_SECRET_KEY',
 ] as const
 
 export interface AppEnv {
@@ -91,8 +91,8 @@ export interface AppEnv {
   DATABASE_URL: string
   DIRECT_URL: string
   SUPABASE_URL: string
-  SUPABASE_ANON_KEY: string
-  SUPABASE_SERVICE_ROLE_KEY: string
+  SUPABASE_PUBLISHABLE_KEY: string
+  SUPABASE_SECRET_KEY: string
 }
 ```
 
@@ -100,8 +100,8 @@ export interface AppEnv {
 
 ```ts
     SUPABASE_URL: raw.SUPABASE_URL as string,
-    SUPABASE_ANON_KEY: raw.SUPABASE_ANON_KEY as string,
-    SUPABASE_SERVICE_ROLE_KEY: raw.SUPABASE_SERVICE_ROLE_KEY as string,
+    SUPABASE_PUBLISHABLE_KEY: raw.SUPABASE_PUBLISHABLE_KEY as string,
+    SUPABASE_SECRET_KEY: raw.SUPABASE_SECRET_KEY as string,
 ```
 
 `src/config/configuration.ts` 的 `AppConfig` 追加同名字段，并在默认导出里读取 `process.env.SUPABASE_*`。
@@ -110,8 +110,8 @@ export interface AppEnv {
 
 ```ts
 process.env.SUPABASE_URL ??= 'https://example.supabase.co'
-process.env.SUPABASE_ANON_KEY ??= 'anon-key'
-process.env.SUPABASE_SERVICE_ROLE_KEY ??= 'service-role-key'
+process.env.SUPABASE_PUBLISHABLE_KEY ??= 'sb_publishable_test'
+process.env.SUPABASE_SECRET_KEY ??= 'sb_secret_test'
 ```
 
 `apps/server/.env.example` 的 Supabase 段改为注释说明「P2 起必填」。
@@ -210,10 +210,10 @@ export class SupabaseService {
 
   constructor(private readonly config: ConfigService) {
     const url = this.config.get<string>('SUPABASE_URL') ?? 'http://localhost'
-    const anonKey = this.config.get<string>('SUPABASE_ANON_KEY') ?? 'anon'
-    const serviceKey = this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ?? 'service'
-    this.admin = createClient(url, serviceKey, { auth: { persistSession: false } })
-    this.authClient = createClient(url, anonKey, { auth: { persistSession: false } })
+    const publishableKey = this.config.get<string>('SUPABASE_PUBLISHABLE_KEY') ?? 'sb_publishable_test'
+    const secretKey = this.config.get<string>('SUPABASE_SECRET_KEY') ?? 'sb_secret_test'
+    this.admin = createClient(url, secretKey, { auth: { persistSession: false } })
+    this.authClient = createClient(url, publishableKey, { auth: { persistSession: false } })
   }
 
   async getUserFromToken(token: string): Promise<AuthUser> {
@@ -1660,9 +1660,9 @@ Expected: 全部通过。
 在 Supabase 控制台创建两个测试用户（A、B），用 `curl` 走一遍：
 
 ```bash
-# 1) 登录取 token（把 <anon> 换成 SUPABASE_ANON_KEY，<url> 换成 SUPABASE_URL）
+# 1) 登录取 token（把 <publishable> 换成 SUPABASE_PUBLISHABLE_KEY，<url> 换成 SUPABASE_URL）
 curl -s -X POST "<url>/auth/v1/token?grant_type=password" \
-  -H "apikey: <anon>" -H "Content-Type: application/json" \
+  -H "apikey: <publishable>" -H "Content-Type: application/json" \
   -d '{"email":"a@hobilog.dev","password":"<passwordA>"}'
 
 # 2) A 创建平台与商品

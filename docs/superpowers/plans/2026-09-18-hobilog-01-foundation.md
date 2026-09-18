@@ -1108,8 +1108,8 @@ DIRECT_URL=postgresql://postgres:password@db.xxxx.supabase.co:5432/postgres
 
 # Supabase（P2 起必填）
 SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SECRET_KEY=
 ```
 
 - [ ] **Step 5: 运行确认通过**
@@ -1934,7 +1934,7 @@ P1 完成：monorepo / shared 枚举包 / NestJS 骨架 / Prisma schema + init m
 统一错误体与分页 / Swagger / 健康检查
 验证命令：pnpm -r build && pnpm -r test && pnpm db:status
 下一步：P2 鉴权与基础资料（Supabase AuthGuard + Product / Platform / Store）
-阻塞：P2 需要 SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY
+阻塞：P2 需要 SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY / SUPABASE_SECRET_KEY
 ```
 
 - [ ] **Step 5: 提交（需用户授权）**

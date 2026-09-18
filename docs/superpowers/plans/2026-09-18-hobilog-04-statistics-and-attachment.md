@@ -15,7 +15,7 @@
 - 统计口径（`docs/07 §73-76`）：实际消费必须用 `Payment.paid_at`；订单规模用 `Order.total_amount`；净支出 = 非退款 PAID 之和 − REFUND PAID 之和；**多币种分开统计，禁止跨币种相加**。
 - 维度统计把订单级付款按 `order_items.subtotal / orders.total_amount` 占比分摊到商品，再按 `products` 字段分组。
 - 所有聚合查询必须显式过滤 `orders.user_id = 当前用户`，并默认排除 `archived = true`。
-- 附件：只允许 `image/jpeg|png|webp|gif` 与 `application/pdf`，单文件 ≤ 10 MB；bucket 固定 `product-images` / `attachments`；服务端只返回 signed URL，`SUPABASE_SERVICE_ROLE_KEY` 不出服务端。
+- 附件：只允许 `image/jpeg|png|webp|gif` 与 `application/pdf`，单文件 ≤ 10 MB；bucket 固定 `product-images` / `attachments`；服务端只返回 signed URL，`SUPABASE_SECRET_KEY` 不出服务端。
 - 提醒调度绝不放 Vue；V0.1 只提供查询接口，不做定时任务。
 - 提交策略同 P1：`git commit` 步骤仅在用户授权时执行。
 
@@ -1635,4 +1635,3 @@ P4 完成：Statistics（dashboard / monthly / future / categories / platforms /
 git add apps/server/test/read-models.e2e-spec.ts docs/superpowers/verification
 git commit -m "test(statistics): add read-model acceptance against postgres"
 ```
-
