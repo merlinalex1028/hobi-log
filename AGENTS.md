@@ -1,41 +1,52 @@
-# 仓库指南
+# HobiLog 工程约定
 
-## 项目结构与模块组织
+## 包结构
+- `apps/server` NestJS API（业务权威入口）
+- `apps/web` Vue3 Web（只调 NestJS API）
+- `packages/shared` 前后端共享枚举 / 常量 / API 类型（CommonJS 产物）
+- `apps/server/prisma` Schema 与 Migration
+- `apps/server/src/generated/prisma` Prisma 7 生成的 Client（已 gitignore，`prisma generate` 产出）
 
-本仓库目前以设计文档为主。产品与架构说明位于 `docs/`，分阶段实施计划位于 `docs/superpowers/plans/`。修改业务行为前，先阅读 `docs/README.md` 及对应的编号文档。
+## 命令
+- 安装：`pnpm install`
+- 构建：`pnpm -r build`（拓扑序：shared → server）
+- 单测：`pnpm -r test`（server 侧只跑 `src`，不依赖数据库）
+- e2e：`pnpm --filter @hobilog/server test:e2e`（跑 `test/`；`test/setup-env.ts` 会先加载 `apps/server/.env`，所以 `order-lifecycle.e2e-spec.ts` 打的是**真实 Supabase PostgreSQL**，只用两个固定假 UUID 造数据并自清理；远端往返慢，该文件单独设了 30s 超时）
+- 类型检查：`pnpm -r typecheck`
+- 生成 Prisma Client：`pnpm db:generate`（改了 `prisma/schema.prisma` 后必跑）
+- 迁移：`pnpm --filter @hobilog/server exec prisma migrate dev --name <name>`
+- 迁移状态：`pnpm db:status`
+- 开发服务端：`pnpm dev:server`（会先构建 shared）
 
-规划中的 pnpm monorepo 结构如下：
+## 工具链（已实测，勿随意升级）
+- Node >= 22.12.0，pnpm 12.4.2（`pnpm-workspace.yaml` 的 `allowBuilds` 放行 prisma / @prisma/engines / @swc/core / @parcel/watcher / unrs-resolver）
+- TypeScript 6.0.3（**不要用 TS 7**，2026-09-20 实测：TS 7 只发原生 `tsc` 可执行文件、不导出编程式 compiler API，`nest build` 直接报错「The installed TypeScript version (7.0.2) does not expose the programmatic compiler API that the Nest CLI requires... expected to return in 7.1」。`tsc --noEmit` 与 Vitest 用 TS 7 都能跑通，但会与 `nest build` 的编译器版本分裂。等 Nest CLI 放宽 `~6.0.2` 且 TS 7.1 恢复 API 后再一起升级）
+- NestJS 12.0.3（**全系 ESM-only**，内置 Express 5 → `@types/express` 5.x）
+- 测试：**Vitest 5 + unplugin-swc**（Jest 无法加载 ESM-only 的 Nest 12；swc 提供 `emitDecoratorMetadata`）
+- Prisma 7.10.0 + `@prisma/adapter-pg`（Prisma 7 的 client 需要 driver adapter）
+- Vue 3.5 + Vite 8 + Vue Router 5 + Pinia 4 + Vitest 5
 
-- `apps/web/`：Vue 3 客户端；页面、组件、组合式函数、状态、资源和 API 适配器放在 `src/`。
-- `apps/server/`：NestJS REST API；领域功能放在 `src/modules/`，通用基础设施放在 `src/common/`，Prisma Schema 与迁移放在 `prisma/`。
-- `packages/shared/`：前后端共享的稳定枚举、常量和 API 类型。
+## TypeScript 6 注意点
+- `baseUrl` 已废弃：不要用，`paths` 直接写相对路径。
+- 不再自动加载 `@types/*`：`apps/server/tsconfig.json` 显式 `types: ["node", "vitest/globals"]`。
+- `tsconfig.build.json` 必须显式 `rootDir: "src"`（否则 TS5011）。
+- 不要用 `paths` 指向 `packages/shared/src`（会触发 rootDir 报错）：跨包类型走 workspace 产物（`pnpm -r` 拓扑序保证先构建 shared）。
 
-始终保持 `Vue -> NestJS REST API -> Prisma -> PostgreSQL` 的依赖方向。Web 端不得通过 Supabase 直接增删改查业务表。
+## Prisma 7 约定
+- Schema 的 `datasource` **不再有 `url`**；连接串在 `apps/server/prisma7.config.ts` 的 `datasource.url`（取 `DIRECT_URL ?? DATABASE_URL`）。
+- `generator client { provider = "prisma-client", output = "../src/generated/prisma" }`。
+- 代码里从生成目录导入：`import { Prisma, PrismaClient } from '<相对深度>/generated/prisma/client'`（**不再从 `@prisma/client` 导入**）。相对深度：`src/modules/<m>/*.ts` → `'../../generated/prisma/client'`；`src/modules/<m>/<sub>/*.ts` → `'../../../generated/prisma/client'`。
+- 运行期实例化统一走 `PrismaService`（内部 `new PrismaPg({ connectionString: DATABASE_URL })`）。
+- CLI 配置用 `dotenv` 读 `apps/server/.env`（由 `pnpm --filter` 的工作目录决定）。
 
-## 构建、测试与开发命令
+## 硬性约定
+- 业务数据只走 `Vue → NestJS API → Prisma → PostgreSQL`；Web 禁用 `supabase.from(...)` / `supabase.rpc(...)`。
+- `userId` 只能来自验证过的 Supabase Token；Controller 里禁止出现 Prisma 调用。
+- 错误体 `{ statusCode, code, message }`；分页 `{ items, total, page, pageSize }`。
+- 金额 API 出口为 `number`；`OrderStatus` 只有 4 个值，归档用 `archived`。
+- 新增接口或改接口后，先跑 `pnpm -r typecheck` 与 `pnpm -r test`，再更新 `docs/05` 对应条目。
 
-应用工作区尚未完成初始化；根 `package.json` 落地后使用以下命令：
-
-- `pnpm install`：安装工作区依赖，要求 Node >= 20.11、pnpm 9。
-- `pnpm dev:server` / `pnpm dev:web`：以监听模式启动 API 或 Web。
-- `pnpm -r build`：按依赖顺序构建所有包。
-- `pnpm -r typecheck`：执行全仓库 TypeScript 检查。
-- `pnpm -r test`：运行全部单元测试。
-- `pnpm --filter @hobilog/server test:e2e`：运行服务端端到端测试。
-- `pnpm db:status`：检查 Prisma 迁移状态。
-
-## 编码风格与命名约定
-
-TypeScript 使用两空格缩进、单引号和无分号风格。Vue 组件采用 PascalCase，如 `OrderFilterBar.vue`；路由页面使用 `pages/orders/detail.vue` 形式的小写路径。统一使用 `<script setup lang="ts">`，可复用逻辑移入 `composables/`。NestJS 文件使用 kebab-case 与职责后缀，如 `order.service.ts`、`create-order.dto.ts`。控制器保持轻量，业务规则放在 Service 中。
-
-## 测试规范
-
-`packages/shared` 与 Web 使用 Vitest，NestJS 使用 Jest 和 Supertest。单元测试与源码就近放置并命名为 `*.spec.ts`；API 测试放在 `apps/server/test/*.e2e-spec.ts`。业务规则变更必须添加回归测试。提交 PR 前运行构建、类型检查、单元测试及相关 e2e 测试。目前未规定覆盖率阈值。
-
-## 提交与 Pull Request 规范
-
-当前历史仅有 `chore: init`，实施计划统一采用 Conventional Commits，例如 `feat(server): add config validation`。提交应聚焦单一目的并使用祈使语气。PR 需说明行为变化、受影响的文档或 API 契约、关联 Issue 或计划、验证命令；UI 变更需附截图。不得提交 `.env`、凭据、数据库连接串、`dist/` 或 `coverage/`；配置变化时同步更新 `.env.example`。
-
-## 代理协作要求
-
-始终使用中文回复，包括进度更新、澄清问题和最终总结；命令、路径、代码标识及必要的技术术语保留原文。修改应聚焦用户要求，不覆盖或回退现有未提交改动。执行文件变更后，说明修改内容及验证结果。
+## 环境变量（`apps/server/.env`）
+- `DATABASE_URL` / `DIRECT_URL`：Supabase PostgreSQL。**本机直连域名不可达（IPv6-only），两者都用 Session pooler 串**（`aws-0-<region>.pooler.supabase.com:5432`）。
+- `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY`：Supabase 新版 key 体系（P2 起必填）。
+- `SUPABASE_SECRET_KEY` 只允许出现在 `apps/server`，禁止进入任何 `VITE_` 变量。

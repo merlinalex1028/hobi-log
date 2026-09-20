@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+
+# 允许执行安装脚本的依赖（pnpm 10+ 默认拦截）
+# 明确拒绝：Scarf 遥测
+allowBuilds:
+  '@parcel/watcher': true
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  '@swc/core': true
+  prisma: true
+  unrs-resolver: true
