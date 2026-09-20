@@ -1,0 +1,339 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PaymentMode {
+  FULL
+  DEPOSIT_BALANCE
+  INSTALLMENT
+  CUSTOM
+}
+
+enum OrderStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum ShipmentStatus {
+  WAITING
+  SHIPPED
+  IN_TRANSIT
+  DELIVERED
+  EXCEPTION
+  RETURNED
+}
+
+model UserProfile {
+  id              String   @id @db.Uuid
+  username        String?
+  avatarUrl       String?
+  defaultCurrency String   @default("CNY")
+  timezone        String   @default("Asia/Shanghai")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  products  Product[]
+  orders    Order[]
+  platforms Platform[]
+  stores    Store[]
+  tags      Tag[]
+
+  @@map("user_profiles")
+}
+
+model Platform {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  name            String
+  logoUrl         String?
+  website         String?
+  region          String?
+  defaultCurrency String?
+  note            String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user   UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stores Store[]
+  orders Order[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("platforms")
+}
+
+model Store {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  platformId String?  @db.Uuid
+  name       String
+  url        String?
+  contact    String?
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform Platform?   @relation(fields: [platformId], references: [id], onDelete: SetNull)
+  orders   Order[]
+
+  @@index([userId])
+  @@index([platformId])
+  @@map("stores")
+}
+
+model Product {
+  id                   String    @id @default(uuid()) @db.Uuid
+  userId               String    @db.Uuid
+  name                 String
+  originalName         String?
+  coverUrl             String?
+  category             String    @default("OTHER")
+  ipName               String?
+  characterName        String?
+  manufacturer         String?
+  seriesName           String?
+  scale                String?
+  version              String?
+  sku                  String?
+  officialPrice        Decimal?  @db.Decimal(14, 2)
+  officialCurrency     String?
+  announcedAt          DateTime? @db.Date
+  originalReleaseDate  DateTime? @db.Date
+  releaseDatePrecision String?
+  description          String?
+  status               String    @default("ACTIVE")
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  user          UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderItems    OrderItem[]
+  releaseEvents ReleaseEvent[]
+  attachments   Attachment[]
+  productTags   ProductTag[]
+
+  @@index([userId])
+  @@index([name])
+  @@index([ipName])
+  @@index([characterName])
+  @@index([manufacturer])
+  @@map("products")
+}
+
+model Order {
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @db.Uuid
+  platformId     String?     @db.Uuid
+  storeId        String?     @db.Uuid
+  orderNo        String?
+  orderUrl       String?
+  orderedAt      DateTime    @db.Date
+  currency       String      @default("CNY")
+  goodsAmount    Decimal     @default(0) @db.Decimal(14, 2)
+  discountAmount Decimal     @default(0) @db.Decimal(14, 2)
+  shippingAmount Decimal     @default(0) @db.Decimal(14, 2)
+  taxAmount      Decimal     @default(0) @db.Decimal(14, 2)
+  extraAmount    Decimal     @default(0) @db.Decimal(14, 2)
+  totalAmount    Decimal     @default(0) @db.Decimal(14, 2)
+  paymentMode    PaymentMode
+  status         OrderStatus @default(ACTIVE)
+  archived       Boolean     @default(false)
+  note           String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  user          UserProfile   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform      Platform?     @relation(fields: [platformId], references: [id], onDelete: SetNull)
+  store         Store?        @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  items         OrderItem[]
+  payments      Payment[]
+  releaseEvents ReleaseEvent[]
+  shipments     Shipment[]
+  orderEvents   OrderEvent[]
+  attachments   Attachment[]
+
+  @@index([userId])
+  @@index([orderedAt])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  orderId   String   @db.Uuid
+  productId String   @db.Uuid
+  quantity  Int      @default(1)
+  unitPrice Decimal  @default(0) @db.Decimal(14, 2)
+  subtotal  Decimal  @default(0) @db.Decimal(14, 2)
+  note      String?
+  createdAt DateTime @default(now())
+
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product       Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  shipmentItems ShipmentItem[]
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model Payment {
+  id            String        @id @default(uuid()) @db.Uuid
+  orderId       String        @db.Uuid
+  type          String
+  name          String?
+  amount        Decimal?      @db.Decimal(14, 2)
+  currency      String        @default("CNY")
+  status        PaymentStatus @default(PENDING)
+  expectedAt    DateTime?     @db.Date
+  dueAt         DateTime?     @db.Date
+  paidAt        DateTime?
+  paymentMethod String?
+  transactionNo String?
+  note          String?
+  sortOrder     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([status])
+  @@index([dueAt])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+model ReleaseEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  orderId       String    @db.Uuid
+  productId     String?   @db.Uuid
+  type          String
+  oldDate       DateTime? @db.Date
+  newDate       DateTime? @db.Date
+  datePrecision String?
+  occurredAt    DateTime  @default(now())
+  source        String?
+  sourceUrl     String?
+  note          String?
+  createdAt     DateTime  @default(now())
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([type])
+  @@index([occurredAt])
+  @@map("release_events")
+}
+
+model Shipment {
+  id                  String         @id @default(uuid()) @db.Uuid
+  orderId             String         @db.Uuid
+  carrier             String?
+  trackingNo          String?
+  status              ShipmentStatus @default(WAITING)
+  shippedAt           DateTime?
+  estimatedDeliveryAt DateTime?
+  deliveredAt         DateTime?
+  note                String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  order Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items ShipmentItem[]
+
+  @@index([orderId])
+  @@index([status])
+  @@index([trackingNo])
+  @@map("shipments")
+}
+
+model ShipmentItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  shipmentId  String   @db.Uuid
+  orderItemId String   @db.Uuid
+  quantity    Int      @default(1)
+  createdAt   DateTime @default(now())
+
+  shipment  Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, orderItemId])
+  @@map("shipment_items")
+}
+
+model OrderEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  orderId     String   @db.Uuid
+  type        String
+  title       String
+  description String?
+  occurredAt  DateTime @default(now())
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([occurredAt])
+  @@map("order_events")
+}
+
+model Attachment {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  orderId     String?  @db.Uuid
+  productId   String?  @db.Uuid
+  type        String   @default("OTHER")
+  fileName    String
+  storagePath String
+  mimeType    String?
+  fileSize    BigInt?
+  createdAt   DateTime @default(now())
+
+  order   Order?   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("attachments")
+}
+
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  name      String
+  createdAt DateTime @default(now())
+
+  user     UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products ProductTag[]
+
+  @@unique([userId, name])
+  @@map("tags")
+}
+
+model ProductTag {
+  productId String @db.Uuid
+  tagId     String @db.Uuid
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([productId, tagId])
+  @@map("product_tags")
+}
