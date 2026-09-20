@@ -205,7 +205,68 @@ PATCH /products/:id
 POST  /products/:id/archive
 ```
 
-## 13. Statistics API
+- `GET /products` 支持 `page` / `pageSize` / `keyword`（名称 / 原名 / SKU）/ `category` / `ipName` / `characterName` / `manufacturer` / `status`（默认 `ACTIVE`）。
+- `ProductVO` 的 `officialPrice` 为 `number | null`，`announcedAt` / `originalReleaseDate` 为 `YYYY-MM-DD`，`tagIds` 为标签 id 数组（请求用 `tagNames`）。
+- 不存在或不属于当前用户的商品返回 `404 PRODUCT_NOT_FOUND`；归档后默认列表不再返回，需显式传 `status=ARCHIVED`。
+
+## 13. Platform API
+
+```text
+GET    /platforms?page=&pageSize=&keyword=
+POST   /platforms
+POST   /platforms/presets
+PATCH  /platforms/:id
+DELETE /platforms/:id
+```
+
+`PlatformVO`：
+
+```ts
+{
+  id: string
+  name: string
+  logoUrl: string | null
+  website: string | null
+  region: string | null
+  defaultCurrency: string | null
+  note: string | null
+  createdAt: string      // ISO
+  storeCount: number     // 关联店铺数
+}
+```
+
+- `GET /platforms` 返回 `{ items, total, page, pageSize }`，按 `createdAt` 升序；`keyword` 匹配名称（不区分大小写）。
+- `POST /platforms/presets` 幂等补齐 8 个预置平台（淘宝 / 京东 / Bilibili 会员购 / Hpoi / AmiAmi / Good Smile / 闲鱼 / 其他），返回 `{ created: number }`，已存在的不重复创建。
+- 归属：全部接口按 Token 的 `userId` 隔离；同名平台返回 `409 CONFLICT`；不存在的平台（或不属于当前用户）返回 `404 PLATFORM_NOT_FOUND`。
+
+## 14. Store API
+
+```text
+GET    /stores?page=&pageSize=&platformId=&keyword=
+POST   /stores
+PATCH  /stores/:id
+DELETE /stores/:id
+```
+
+`StoreVO`：
+
+```ts
+{
+  id: string
+  name: string
+  platformId: string | null
+  platformName: string | null
+  url: string | null
+  contact: string | null
+  note: string | null
+  createdAt: string      // ISO
+}
+```
+
+- `platformId` 可空（线下店）；传入时必须属于当前用户，否则 `404 PLATFORM_NOT_FOUND`。
+- 不存在的店铺（或不属于当前用户）返回 `404 STORE_NOT_FOUND`；删除返回 `{ id }`。
+
+## 15. Statistics API
 
 ```text
 GET /statistics/dashboard
@@ -217,7 +278,7 @@ GET /statistics/manufacturers
 GET /statistics/ips
 ```
 
-## 14. Attachment API
+## 16. Attachment API
 
 ```text
 POST /attachments/upload-url
@@ -227,7 +288,7 @@ DELETE /attachments/:id
 
 文件上传使用 signed URL，避免大文件必须经过 NestJS。
 
-## 15. DisplayStatus
+## 17. DisplayStatus
 
 列表和详情接口建议直接返回：
 
@@ -242,7 +303,7 @@ shipmentSummary
 
 后端是业务状态权威来源，前端只负责展示与轻量纯函数。
 
-## 16. Timeline
+## 18. Timeline
 
 详情接口建议直接返回：
 
@@ -259,7 +320,7 @@ Shipment
 OrderEvent
 ```
 
-## 17. TanStack Query
+## 19. TanStack Query
 
 推荐直接加入：
 
@@ -269,7 +330,7 @@ pnpm --filter web add @tanstack/vue-query
 
 负责缓存、分页、Mutation 和 invalidate。
 
-## 18. Mutation 刷新
+## 20. Mutation 刷新
 
 标记付款成功：
 
@@ -289,7 +350,7 @@ orders list
 dashboard
 ```
 
-## 19. Web API 目录
+## 21. Web API 目录
 
 ```text
 apps/web/src/api/
@@ -306,7 +367,7 @@ apps/web/src/api/
 └─ statistics.api.ts
 ```
 
-## 20. 验收标准
+## 22. 验收标准
 
 业务页面代码不应出现：
 

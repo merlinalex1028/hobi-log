@@ -8,6 +8,60 @@
 
 **Tech Stack:** 复用 P1/P2 全栈（NestJS 10 / Prisma 5 / class-validator / Jest + Supertest）。
 
+## 环境偏差（P1 实测结论，本计划执行时必须遵守）
+
+P1 落地时依赖取最新，实际工具链与计划原文不同，执行本计划前先读这段：
+
+| 项 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| 测试框架 | Jest 30 + ts-jest | **Vitest 5 + unplugin-swc** | NestJS 12 全系 ESM-only，Jest 30 无法 `require()` 它；Vitest 在 Node 22 上原生跑 ESM |
+| 测试写法 | `jest.fn()` | `vi.fn()`（已批量替换）；spec 内用全局 `describe/it/expect` | 同上 |
+| 命令 | `pnpm --filter @hobilog/server test` / `test:e2e` | 同（内部为 `vitest run src` / `vitest run test`） | 配置在 `apps/server/vitest.config.mts` |
+| Prisma Client 导入 | `from '@prisma/client'` | **`from '<相对深度>/generated/prisma/client'`** | Prisma 7 客户端生成到 `apps/server/src/generated/prisma` |
+| Prisma 命名空间 | `import { Prisma } from '@prisma/client'` | `import { Prisma } from '<相对深度>/generated/prisma/client'`（含 `Prisma.Decimal` / `Prisma.sql` / `Prisma.empty` / `Prisma.PrismaClientKnownRequestError`） | 同上 |
+| PrismaClient 实例化 | `new PrismaClient()` | 已封装在 `PrismaService`（内部 `new PrismaPg({ connectionString })`） | Prisma 7 要求 driver adapter |
+| TypeScript | 5.6 | 6.0.3 | TS 7.0 只有原生 `tsc`、无编程式 compiler API，`nest build`（Nest CLI 12）不可用 |
+| NestJS | 10 | 12.0.3（Express 5，`@types/express` 5.x） | 取最新 |
+| 分页/错误体 | `PaginationQueryDto` / `BusinessException` / `mapException` | 与计划一致（P1 已实现，直接复用） | — |
+
+相对深度速查（导入生成客户端时）：
+- `src/modules/<module>/*.ts` → `'../../generated/prisma/client'`
+- `src/modules/<module>/<sub>/*.ts` → `'../../../generated/prisma/client'`
+- `src/common/<sub>/*.ts` → `'../../generated/prisma/client'`
+- 测试（`apps/server/test/*.ts`） → `'../src/generated/prisma/client'`；e2e 里 `overrideProvider(PrismaService)` 的 mock 需额外提供 `$queryRaw`
+
+## 执行偏差记录（P2 实测）
+
+| 位置 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| 错误码断言 | `toMatchObject({ code: 'XXX' })` | `toMatchObject({ response: { code: 'XXX' } })` | `BusinessException` 继承 `HttpException`，`code` 在 `getResponse()` 返回体里，不是异常顶层自有属性（P2 实测踩过，本计划已批量修正） |
+| 单资源归属校验 | （P2 里 `INVALID_PLATFORM` / `INVALID_STORE`） | 404 + `<RESOURCE>_NOT_FOUND` | 单个资源「不存在或不属于当前用户」统一 404；400 `INVALID_*` 只用于批量 id 校验（本计划 `INVALID_PRODUCTS` / `INVALID_SHIPMENT_ITEMS`） |
+| 模块结构 | 单文件内联 VO | 每模块 `mapper/<name>.mapper.ts` + `.spec.ts` | 与 P2 的 product / platform / store 保持一致 |
+| `payment-summary.ts` / `shipment.ts` 的 OVERDUE 判断 | `status === 'PENDING' \|\| status === 'OVERDUE'` | 去掉 `'OVERDUE'` 分支（`isPending` 只判断 `'PENDING'`；`isOrderCompleted` 用 `status === 'PENDING' \|\| isOverdue(payment, today)`） | `PaymentStatus` 联合类型里没有 `OVERDUE`（不落库），原写法触发 TS2367 编译错误（Task 1 / 2 实测） |
+| `display-status.ts` 的 `WAITING_PAYMENT` 提示 | `next.dueAt ? '…截止' : '暂无截止日期'` | `next.dueAt ? '…截止' : (next.amount === null ? '暂无截止日期' : null)` | 计划测试自相矛盾：`dueAt: null` 且金额已知的尾款期望 `null`，而 `dueAt: null` 且金额待定的邮费期望 `'暂无截止日期'`（Task 3 实测）。按「只有金额也待定才提示」可同时满足 |
+| `display-status.spec.ts` 的 `it.each` 用例表 | 内联数组字面量 | 先声明 `nextPaymentCases: Array<[string, PaymentLike[], string]>` | `it.each` 不提供上下文类型，展开对象里的 `status` 被推断成 `string`，触发 TS2345（Task 3 实测） |
+| `mapper/order-domain.mapper.ts` 导入 | `from '@prisma/client'` | `from '../../../generated/prisma/client'` | 约定：从生成目录导入（Task 4 实测） |
+| VO 文件位置 | 另建 `vo/order-list.vo.ts` / `vo/order-detail.vo.ts` | `OrderListItemVo` / `TimelineItemVo` / `OrderDetailVo` 并入 `mapper/order.mapper.ts` | 与 P2 product / platform / store 一致（Task 4 实测） |
+| DTO 枚举字段类型 | `paymentMode!: string`、`status?: string` | `PaymentMode`、`PaymentStatus`、`OrderStatus` | Prisma 枚举不接受 `string`，原写法 TS2322（Task 4 实测） |
+| `refreshStatus` 类型断言 | `as OrderWithRelations` | `as unknown as OrderWithRelations` | 最小字段集对象与之无可比性，TS2352（Task 4 实测） |
+| `order.service.ts` 导入 | 计划代码块用了 `OrderDomain` 但漏了 import | 补 `import type { OrderDomain } from './domain/types'` | 计划遗漏（Task 4 实测） |
+| `QueryOrderDto.delayed` | `@Type(() => Boolean)` | `@Transform(({ value }) => value === true \|\| value === 'true')`，并加 `query-order.dto.spec.ts` | `Boolean('false') === true`，会把 `?delayed=false` 当成 true 过滤（Task 4 实测的潜在 bug） |
+| `payment.service.ts` 的 `markPaid` 守卫 | `status !== 'PENDING' && status !== 'OVERDUE'` | `status !== 'PENDING'` | 同 #4：无 `OVERDUE` 枚举值；并补「PENDING 且已过期仍可标记付款」用例锁定语义（Task 5） |
+| `CreatePaymentDto`（payment 模块） | 手写一份与 `CreateOrderDto` 内嵌 DTO 相同的字段 | `extends CreatePaymentDto`（from `../../order/dto/create-order.dto`）+ `sortOrder?` | 单一来源，避免两处校验规则漂移；字段集合不变（Task 5） |
+| `release.service.ts` 依赖 | 计划 Interfaces 写 `OrderService.{assertOwned, getDomain}` | 用 `findOwnedWithRelations` + `toDomain` | `getDomain` 不存在，计划文字笔误（Task 6） |
+| `BalanceOpenDto.paymentType` | `paymentType?: string` | 新常量 `BALANCE_OPEN_PAYMENT_TYPES = ['BALANCE','INSTALLMENT','OTHER']` + `@IsIn` | 约定 #6：枚举字段用联合类型（Task 6） |
+| `CreateShipmentDto.status` / `UpdateShipmentDto.status` | `status?: string` | `'WAITING' \| 'SHIPPED'` / `ShipmentStatus` | 约定 #6（Task 7） |
+| `ReleaseModule` / `ShipmentModule` | 计划未写 `exports` | 各自 `exports: [ReleaseService]` / `[ShipmentService]` | 与 `PaymentModule` 一致（Task 6 / 7） |
+| 各 service spec 的 `tx` 脚手架 | `tx: Record<string, unknown>` + 内联对象 | 显式 `interface TxMock` + `txMock()` 工厂 | `tx.payment.update` 等被推断为 `unknown`，编译失败（Task 5 / 6 / 7） |
+| e2e 的身份 mock（Task 8） | `Object.assign(new Error('invalid'), { status: 401 })` | `BusinessException(HttpStatus.UNAUTHORIZED, 'UNAUTHORIZED', …)` | 裸 `Error` 会被 `AllExceptionsFilter` 映射成 500（P2 已踩过） |
+| e2e 的 app 装配（Task 8） | 只 `setGlobalPrefix` + filter | 追加 `createValidationPipe()` | 与 `main.ts` 一致（含 `whitelist + forbidNonWhitelisted`），e2e 才真正验证 DTO |
+| e2e 的运行环境（Task 8） | 依赖 `test/setup-env.ts` 的 `??=` 兜底（`localhost:5432/hobilog_test`） | `setup-env.ts` 先用 `dotenv` 加载 `apps/server/.env`，再保留 `??=` 兜底 | 原写法下 e2e 根本连不上真实库（Task 8 实测踩到），改后 e2e 打到真实 Supabase PostgreSQL；单测无影响 |
+| 场景 I 的调用顺序（Task 8） | 先签收第一个包裹，再创建第二个包裹 | 先建两个包裹（验证 `inTransitCount=2` 与超量 400）→ 依次签收（签收 A 后仍 `IN_TRANSIT`、签收 B 后 `COMPLETED`） | 与 `docs/07 §25` 冲突：完成条件 = 无待付款 + ≥1 物流 + 全部 DELIVERED，故首个包裹签收即 `COMPLETED`，后续建物流会 400 `ORDER_NOT_ACTIVE` |
+| 远端库 e2e 的超时（Task 8） | 默认 5s | 该文件 `vi.setConfig({ testTimeout: 30_000 })` | 每个场景 1–3s 往返，默认超时会误报 |
+| `setup-env.ts` 的路径解析（Task 8） | （初版用 `import.meta.url`） | `process.cwd()` 探测 + `existsSync` | TS 以 CommonJS 输出，`import.meta` 触发 TS1470 |
+
+---
+
 ## Global Constraints
 
 沿用 roadmap 全局约束与 P2 约束。P3 追加：
@@ -34,7 +88,7 @@
 - Consumes: `@hobilog/shared` 的 `PaymentStatus` / `OrderStatus` / `ShipmentStatus` / `PaymentSummaryStatus`
 - Produces: `PaymentLike`、`ReleaseEventLike`、`ShipmentLike`、`OrderDomain`、`NextPaymentInfo`；`isOverdue`、`getPaidAmount`、`getRefundAmount`、`getNetPaidAmount`、`getPendingAmount`、`getPaymentProgress`、`getPaymentSummaryStatus`、`getNextPayment`、`getNextPaymentLabel`
 
-- [ ] **Step 1: 写 `domain/types.ts`**
+- [x] **Step 1: 写 `domain/types.ts`**
 
 ```ts
 import type { OrderStatus, PaymentStatus, ShipmentStatus } from '@hobilog/shared'
@@ -82,7 +136,7 @@ export interface OrderDomain {
 }
 ```
 
-- [ ] **Step 2: 写失败的 `payment-summary.spec.ts`**
+- [x] **Step 2: 写失败的 `payment-summary.spec.ts`**
 
 ```ts
 import type { PaymentLike } from './types'
@@ -209,12 +263,12 @@ describe('getNextPaymentLabel', () => {
 })
 ```
 
-- [ ] **Step 3: 运行确认失败**
+- [x] **Step 3: 运行确认失败**
 
 Run: `pnpm --filter @hobilog/server test`
-Expected: FAIL，`Cannot find module './payment-summary'`。
+Expected: FAIL，`Cannot find module './payment-summary'`。（实测一致）
 
-- [ ] **Step 4: 实现 `payment-summary.ts`**
+- [x] **Step 4: 实现 `payment-summary.ts`**
 
 ```ts
 import type { PaymentSummaryStatus } from '@hobilog/shared'
@@ -325,9 +379,9 @@ export function getNextPaymentLabel(type: string): string {
 }
 ```
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
-Run: `pnpm --filter @hobilog/server test` → Expected: PASS。
+Run: `pnpm --filter @hobilog/server test` → Expected: PASS。（实测：payment-summary 30 tests，全套 15 files / 101 tests 全绿；typecheck 无错误）
 
 ```bash
 git add apps/server/src/modules/order/domain
@@ -348,7 +402,7 @@ git commit -m "feat(order): add payment summary domain functions"
 - Consumes: `Task 1` 的类型与 `getPaidAmount`
 - Produces: `getReleaseStatus`、`isReleased`、`getPlannedReleaseDate`、`getDelayMonths`、`getDelayHistory`、`getShipmentSummaryStatus`、`hasShippedShipment`、`countInTransit`、`isOrderCompleted`
 
-- [ ] **Step 1: 写失败的 `release.spec.ts`**
+- [x] **Step 1: 写失败的 `release.spec.ts`**
 
 ```ts
 import type { ReleaseEventLike } from './types'
@@ -443,7 +497,7 @@ describe('isReleased', () => {
 })
 ```
 
-- [ ] **Step 2: 实现 `release.ts`**
+- [x] **Step 2: 实现 `release.ts`**
 
 ```ts
 import type { ReleaseStatus } from '@hobilog/shared'
@@ -516,7 +570,7 @@ export function getDelayHistory(
 }
 ```
 
-- [ ] **Step 3: 写失败的 `shipment.spec.ts`**
+- [x] **Step 3: 写失败的 `shipment.spec.ts`**
 
 ```ts
 import type { OrderDomain, PaymentLike, ShipmentLike } from './types'
@@ -620,7 +674,7 @@ describe('isOrderCompleted', () => {
 })
 ```
 
-- [ ] **Step 4: 实现 `shipment.ts`**
+- [x] **Step 4: 实现 `shipment.ts`**
 
 ```ts
 import { SHIPMENT_SUMMARY_PRIORITY } from '@hobilog/shared'
@@ -658,9 +712,9 @@ export function isOrderCompleted(order: OrderDomain, today: string): boolean {
 }
 ```
 
-- [ ] **Step 5: 运行测试并提交**
+- [x] **Step 5: 运行测试并提交**
 
-Run: `pnpm --filter @hobilog/server test` → Expected: PASS。
+Run: `pnpm --filter @hobilog/server test` → Expected: PASS。（实测：release 18 + shipment 15 tests，全套 17 files / 134 tests 全绿；typecheck 无错误）
 
 ```bash
 git add apps/server/src/modules/order/domain
@@ -679,7 +733,7 @@ git commit -m "feat(order): add release and shipment derivation functions"
 - Consumes: `Task 1` / `Task 2` 全部函数
 - Produces: `getDisplayStatus(order, today): DisplayStatus`、`getDisplayStatusLabel(order, today): string`、`getDisplayStatusHint(order, today): string | null`
 
-- [ ] **Step 1: 写失败的 `display-status.spec.ts`**
+- [x] **Step 1: 写失败的 `display-status.spec.ts`**
 
 ```ts
 import type { OrderDomain, PaymentLike, ReleaseEventLike, ShipmentLike } from './types'
@@ -801,7 +855,7 @@ describe('getDisplayStatusHint', () => {
 })
 ```
 
-- [ ] **Step 2: 实现 `display-status.ts`**
+- [x] **Step 2: 实现 `display-status.ts`**
 
 ```ts
 import { DISPLAY_STATUS_LABELS } from '@hobilog/shared'
@@ -881,9 +935,9 @@ export function getDisplayStatusHint(order: OrderDomain, today: string): string 
 
 分支顺序必须与 `docs/07 §21` 一致：`CANCELLED → REFUNDED → PAYMENT_OVERDUE → WAITING_PAYMENT → SHIPMENT_EXCEPTION → IN_TRANSIT → WAITING_SHIPMENT → COMPLETED → WAITING_RELEASE → ACTIVE`（`COMPLETED` 判定内含「所有 Shipment 已签收」，故排在 `WAITING_SHIPMENT` 之后不影响 A/J 场景）。
 
-- [ ] **Step 3: 运行测试并提交**
+- [x] **Step 3: 运行测试并提交**
 
-Run: `pnpm --filter @hobilog/server test` → Expected: 12 场景 + 标签/提示用例全 PASS。
+Run: `pnpm --filter @hobilog/server test` → Expected: 12 场景 + 标签/提示用例全 PASS。（实测：display-status 26 tests，全套 18 files / 160 tests 全绿；typecheck 无错误）
 
 ```bash
 git add apps/server/src/modules/order/domain
@@ -918,7 +972,7 @@ git commit -m "feat(order): add display status derivation covering acceptance sc
   - `OrderListItemVo`、`OrderDetailVo`、`TimelineItemVo`
   - `ORDER_INCLUDE`、`buildTabWhere(tab, today)`、`OrderService.{create,list,getDetail,update,cancel,refreshStatus,assertOwned,findOwnedWithRelations,today}`
 
-- [ ] **Step 1: 写 DTO（4 个文件）**
+- [x] **Step 1: 写 DTO（4 个文件）**
 
 `dto/create-order.dto.ts`:
 
@@ -1061,7 +1115,7 @@ export class CancelOrderDto {
 }
 ```
 
-- [ ] **Step 2: 写 domain mapper 与 VO 定义**
+- [x] **Step 2: 写 domain mapper 与 VO 定义**
 
 `mapper/order-domain.mapper.ts`:
 
@@ -1234,7 +1288,7 @@ export interface OrderDetailVo extends OrderListItemVo {
 }
 ```
 
-- [ ] **Step 3: 写 `mapper/order.mapper.ts`（列表 / 详情 / timeline 聚合）**
+- [x] **Step 3: 写 `mapper/order.mapper.ts`（列表 / 详情 / timeline 聚合）**
 
 ```ts
 import { RELEASE_EVENT_TYPE_LABELS } from '@hobilog/shared'
@@ -1460,7 +1514,7 @@ export function toOrderDetailVo(order: OrderWithRelations, today: string): Order
 }
 ```
 
-- [ ] **Step 4: 写 `order.service.ts`**
+- [x] **Step 4: 写 `order.service.ts`**
 
 ```ts
 import { HttpStatus, Injectable } from '@nestjs/common'
@@ -1800,32 +1854,32 @@ export class OrderService {
 
 说明：`refreshStatus` 直接复用 `toOrderDomain`，因此这里用最小字段集构造 `OrderWithRelations`（`items`/`orderEvents`/`attachments` 等不参与判定）。`releaseEvents` 参与 `OrderDomain` 但不参与 `isOrderCompleted` 判定。
 
-- [ ] **Step 5: 写 `order.service.spec.ts`**
+- [x] **Step 5: 写 `order.service.spec.ts`**
 
 ```ts
 import { OrderService, buildTabWhere } from './order.service'
 
 const prismaMock = () => ({
   order: {
-    findMany: jest.fn().mockResolvedValue([]),
-    count: jest.fn().mockResolvedValue(0),
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
+    findMany: vi.fn().mockResolvedValue([]),
+    count: vi.fn().mockResolvedValue(0),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
   },
-  orderItem: { createMany: jest.fn() },
-  payment: { createMany: jest.fn(), updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
-  releaseEvent: { create: jest.fn() },
-  orderEvent: { create: jest.fn() },
-  $transaction: jest.fn(),
+  orderItem: { createMany: vi.fn() },
+  payment: { createMany: vi.fn(), updateMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]), create: vi.fn() },
+  releaseEvent: { create: vi.fn() },
+  orderEvent: { create: vi.fn() },
+  $transaction: vi.fn(),
 })
 
 const buildService = (prisma: ReturnType<typeof prismaMock>, overrides: Record<string, unknown> = {}) =>
   new OrderService(
     prisma as never,
-    { getOwnedProductIds: jest.fn().mockResolvedValue([]), ...overrides } as never,
-    { assertOwned: jest.fn().mockResolvedValue(undefined) } as never,
-    { assertOwned: jest.fn().mockResolvedValue(undefined) } as never,
+    { getOwnedProductIds: vi.fn().mockResolvedValue([]), ...overrides } as never,
+    { assertOwned: vi.fn().mockResolvedValue(undefined) } as never,
+    { assertOwned: vi.fn().mockResolvedValue(undefined) } as never,
   )
 
 describe('buildTabWhere', () => {
@@ -1860,7 +1914,7 @@ describe('buildTabWhere', () => {
 describe('OrderService.create', () => {
   it('商品不属于当前用户 → 400 INVALID_PRODUCTS', async () => {
     const prisma = prismaMock()
-    const service = buildService(prisma, { getOwnedProductIds: jest.fn().mockResolvedValue(['p1']) })
+    const service = buildService(prisma, { getOwnedProductIds: vi.fn().mockResolvedValue(['p1']) })
     await expect(
       service.create('u1', {
         items: [
@@ -1878,24 +1932,24 @@ describe('OrderService.create', () => {
         extraAmount: 0,
         payments: [{ type: 'FULL', amount: 200 }],
       }),
-    ).rejects.toMatchObject({ status: 400, code: 'INVALID_PRODUCTS' })
+    ).rejects.toMatchObject({ status: 400, response: { code: 'INVALID_PRODUCTS' } })
     expect(prisma.$transaction).not.toHaveBeenCalled()
   })
 
   it('自动计算商品金额与订单总额，并写入 Payments 与预计出货', async () => {
     const prisma = prismaMock()
     const tx = {
-      order: { create: jest.fn().mockResolvedValue({ id: 'o1' }) },
-      orderItem: { createMany: jest.fn() },
-      payment: { createMany: jest.fn() },
-      releaseEvent: { create: jest.fn() },
-      orderEvent: { create: jest.fn() },
+      order: { create: vi.fn().mockResolvedValue({ id: 'o1' }) },
+      orderItem: { createMany: vi.fn() },
+      payment: { createMany: vi.fn() },
+      releaseEvent: { create: vi.fn() },
+      orderEvent: { create: vi.fn() },
     }
     prisma.$transaction.mockImplementation(async (arg: never) =>
       (arg as unknown as (t: unknown) => Promise<unknown>)(tx),
     )
-    const service = buildService(prisma, { getOwnedProductIds: jest.fn().mockResolvedValue(['p1']) })
-    service.getDetail = jest.fn().mockResolvedValue({ id: 'o1' } as never)
+    const service = buildService(prisma, { getOwnedProductIds: vi.fn().mockResolvedValue(['p1']) })
+    service.getDetail = vi.fn().mockResolvedValue({ id: 'o1' } as never)
 
     await service.create('u1', {
       items: [{ productId: 'p1', quantity: 2, unitPrice: 649.5 }],
@@ -1944,17 +1998,17 @@ describe('OrderService.create', () => {
   it('关闭自动计算时使用传入的商品金额', async () => {
     const prisma = prismaMock()
     const tx = {
-      order: { create: jest.fn().mockResolvedValue({ id: 'o2' }) },
-      orderItem: { createMany: jest.fn() },
-      payment: { createMany: jest.fn() },
-      releaseEvent: { create: jest.fn() },
-      orderEvent: { create: jest.fn() },
+      order: { create: vi.fn().mockResolvedValue({ id: 'o2' }) },
+      orderItem: { createMany: vi.fn() },
+      payment: { createMany: vi.fn() },
+      releaseEvent: { create: vi.fn() },
+      orderEvent: { create: vi.fn() },
     }
     prisma.$transaction.mockImplementation(async (arg: never) =>
       (arg as unknown as (t: unknown) => Promise<unknown>)(tx),
     )
-    const service = buildService(prisma, { getOwnedProductIds: jest.fn().mockResolvedValue(['p1']) })
-    service.getDetail = jest.fn().mockResolvedValue({ id: 'o2' } as never)
+    const service = buildService(prisma, { getOwnedProductIds: vi.fn().mockResolvedValue(['p1']) })
+    service.getDetail = vi.fn().mockResolvedValue({ id: 'o2' } as never)
 
     await service.create('u1', {
       items: [{ productId: 'p1', quantity: 1, unitPrice: 100 }],
@@ -1997,22 +2051,22 @@ describe('OrderService.cancel', () => {
     const prisma = prismaMock()
     prisma.order.findFirst.mockResolvedValue({ status: 'COMPLETED' })
     const service = buildService(prisma)
-    await expect(service.cancel('u1', 'o1', { refund: false })).rejects.toMatchObject({ code: 'ORDER_NOT_CANCELLABLE' })
+    await expect(service.cancel('u1', 'o1', { refund: false })).rejects.toMatchObject({ response: { code: 'ORDER_NOT_CANCELLABLE' } })
   })
 
   it('取消时把 PENDING 付款改为 CANCELLED 并写事件', async () => {
     const prisma = prismaMock()
     prisma.order.findFirst.mockResolvedValue(orderRow)
     const tx = {
-      order: { update: jest.fn() },
-      payment: { updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([{ amount: 300 }]), create: jest.fn() },
-      orderEvent: { create: jest.fn() },
+      order: { update: vi.fn() },
+      payment: { updateMany: vi.fn(), findMany: vi.fn().mockResolvedValue([{ amount: 300 }]), create: vi.fn() },
+      orderEvent: { create: vi.fn() },
     }
     prisma.$transaction.mockImplementation(async (arg: never) =>
       (arg as unknown as (t: unknown) => Promise<unknown>)(tx),
     )
     const service = buildService(prisma)
-    service.getDetail = jest.fn().mockResolvedValue({ id: 'o1' } as never)
+    service.getDetail = vi.fn().mockResolvedValue({ id: 'o1' } as never)
 
     await service.cancel('u1', 'o1', { refund: true, note: '店家取消' })
 
@@ -2033,15 +2087,15 @@ describe('OrderService.cancel', () => {
     const prisma = prismaMock()
     prisma.order.findFirst.mockResolvedValue(orderRow)
     const tx = {
-      order: { update: jest.fn() },
-      payment: { updateMany: jest.fn(), findMany: jest.fn(), create: jest.fn() },
-      orderEvent: { create: jest.fn() },
+      order: { update: vi.fn() },
+      payment: { updateMany: vi.fn(), findMany: vi.fn(), create: vi.fn() },
+      orderEvent: { create: vi.fn() },
     }
     prisma.$transaction.mockImplementation(async (arg: never) =>
       (arg as unknown as (t: unknown) => Promise<unknown>)(tx),
     )
     const service = buildService(prisma)
-    service.getDetail = jest.fn().mockResolvedValue({ id: 'o1' } as never)
+    service.getDetail = vi.fn().mockResolvedValue({ id: 'o1' } as never)
 
     await service.cancel('u1', 'o1', { refund: false })
 
@@ -2091,7 +2145,9 @@ describe('OrderService.refreshStatus', () => {
 })
 ```
 
-- [ ] **Step 6: 写 controller / module 并运行测试**
+- [x] **Step 6: 写 controller / module 并运行测试**
+
+（实测：order.service.spec 15 tests + query-order.dto.spec 5 tests，全套 20 files / 180 tests 全绿；typecheck、`nest build`、e2e 10 passed 均无回归）**
 
 `order.controller.ts`:
 
@@ -2202,7 +2258,7 @@ git commit -m "feat(order): add order create, list tabs, detail aggregation and 
   - `PaymentService.{create,update,markPaid,refund}`
 - 规则（`docs/03 §30`、`docs/07 §41-44`）：实付 = 计划 → 按原金额入账；实付 > 计划 → 原金额不变 + 新建 `SUPPLEMENT` 已付节点；实付 < 计划 → 按实付修正并在 note 记录原计划。
 
-- [ ] **Step 1: 写 DTO**
+- [x] **Step 1: 写 DTO**
 
 `dto/create-payment.dto.ts`：与 `CreateOrderDto` 内的 `CreatePaymentDto` 字段一致，追加 `@IsOptional() @Type(() => Number) @IsInt() @Min(0) sortOrder?: number`。
 
@@ -2269,7 +2325,7 @@ export class RefundPaymentDto {
 }
 ```
 
-- [ ] **Step 2: 写 `payment.service.ts`**
+- [x] **Step 2: 写 `payment.service.ts`**
 
 ```ts
 import { HttpStatus, Injectable } from '@nestjs/common'
@@ -2447,27 +2503,27 @@ export class PaymentService {
 }
 ```
 
-- [ ] **Step 3: 写 `payment.service.spec.ts`**
+- [x] **Step 3: 写 `payment.service.spec.ts`**
 
 ```ts
 import { PaymentService } from './payment.service'
 
 const prismaMock = () => ({
   payment: {
-    findFirst: jest.fn(),
-    update: jest.fn(),
-    create: jest.fn(),
-    findMany: jest.fn().mockResolvedValue([]),
-    aggregate: jest.fn().mockResolvedValue({ _max: { sortOrder: 1 } }),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+    create: vi.fn(),
+    findMany: vi.fn().mockResolvedValue([]),
+    aggregate: vi.fn().mockResolvedValue({ _max: { sortOrder: 1 } }),
   },
-  $transaction: jest.fn(),
+  $transaction: vi.fn(),
 })
 
 const buildService = (prisma: ReturnType<typeof prismaMock>) =>
   new PaymentService(prisma as never, {
-    assertOwned: jest.fn().mockResolvedValue(undefined),
-    refreshStatus: jest.fn().mockResolvedValue('ACTIVE'),
-    getDetail: jest.fn().mockResolvedValue({ id: 'o1' }),
+    assertOwned: vi.fn().mockResolvedValue(undefined),
+    refreshStatus: vi.fn().mockResolvedValue('ACTIVE'),
+    getDetail: vi.fn().mockResolvedValue({ id: 'o1' }),
   } as never)
 
 const withTx = (prisma: ReturnType<typeof prismaMock>, tx: Record<string, unknown>) => {
@@ -2483,7 +2539,7 @@ describe('PaymentService.markPaid', () => {
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PAID', type: 'BALANCE', amount: 999 })
     await expect(buildService(prisma).markPaid('u1', 'pay1', { paidAmount: 999, createSupplement: true })).rejects.toMatchObject({
       status: 400,
-      code: 'PAYMENT_NOT_PAYABLE',
+      response: { code: 'PAYMENT_NOT_PAYABLE' },
     })
     expect(prisma.$transaction).not.toHaveBeenCalled()
   })
@@ -2491,7 +2547,7 @@ describe('PaymentService.markPaid', () => {
   it('实付等于计划 → 按原金额入账且不建补差价', async () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PENDING', type: 'BALANCE', amount: 999 })
-    const tx = withTx(prisma, { payment: { update: jest.fn(), create: jest.fn() } })
+    const tx = withTx(prisma, { payment: { update: vi.fn(), create: vi.fn() } })
     await buildService(prisma).markPaid('u1', 'pay1', { paidAmount: 999, createSupplement: true })
     expect(tx.payment.update).toHaveBeenCalledWith({
       where: { id: 'pay1' },
@@ -2503,7 +2559,7 @@ describe('PaymentService.markPaid', () => {
   it('实付高于计划 → 原金额不变 + 新建 SUPPLEMENT', async () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PENDING', type: 'BALANCE', amount: 999, currency: 'CNY' })
-    const tx = withTx(prisma, { payment: { update: jest.fn(), create: jest.fn() } })
+    const tx = withTx(prisma, { payment: { update: vi.fn(), create: vi.fn() } })
     await buildService(prisma).markPaid('u1', 'pay1', { paidAmount: 1029, createSupplement: true })
     expect(tx.payment.update).toHaveBeenCalledWith({
       where: { id: 'pay1' },
@@ -2517,7 +2573,7 @@ describe('PaymentService.markPaid', () => {
   it('createSupplement = false 时不建补差价', async () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PENDING', type: 'BALANCE', amount: 999, currency: 'CNY' })
-    const tx = withTx(prisma, { payment: { update: jest.fn(), create: jest.fn() } })
+    const tx = withTx(prisma, { payment: { update: vi.fn(), create: vi.fn() } })
     await buildService(prisma).markPaid('u1', 'pay1', { paidAmount: 1029, createSupplement: false })
     expect(tx.payment.create).not.toHaveBeenCalled()
   })
@@ -2525,7 +2581,7 @@ describe('PaymentService.markPaid', () => {
   it('实付低于计划 → 按实付修正并记录原计划', async () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PENDING', type: 'BALANCE', amount: 999 })
-    const tx = withTx(prisma, { payment: { update: jest.fn(), create: jest.fn() } })
+    const tx = withTx(prisma, { payment: { update: vi.fn(), create: vi.fn() } })
     await buildService(prisma).markPaid('u1', 'pay1', { paidAmount: 900, note: '店家优惠', createSupplement: true })
     expect(tx.payment.update).toHaveBeenCalledWith({
       where: { id: 'pay1' },
@@ -2536,7 +2592,7 @@ describe('PaymentService.markPaid', () => {
   it('金额待定（amount = null）→ 按实付入账', async () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PENDING', type: 'SHIPPING', amount: null })
-    const tx = withTx(prisma, { payment: { update: jest.fn(), create: jest.fn() } })
+    const tx = withTx(prisma, { payment: { update: vi.fn(), create: vi.fn() } })
     await buildService(prisma).markPaid('u1', 'pay1', { paidAmount: 20, createSupplement: true })
     expect(tx.payment.update).toHaveBeenCalledWith({
       where: { id: 'pay1' },
@@ -2551,14 +2607,14 @@ describe('PaymentService.refund', () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PENDING', type: 'BALANCE', amount: 999 })
     await expect(buildService(prisma).refund('u1', 'pay1', { amount: 300, markOriginal: true })).rejects.toMatchObject({
-      code: 'PAYMENT_NOT_REFUNDABLE',
+      response: { code: 'PAYMENT_NOT_REFUNDABLE' },
     })
   })
 
   it('全额退款 → 原节点 REFUNDED，退款金额为正数', async () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PAID', type: 'DEPOSIT', amount: 300, currency: 'CNY', name: '定金' })
-    const tx = withTx(prisma, { payment: { create: jest.fn(), update: jest.fn() } })
+    const tx = withTx(prisma, { payment: { create: vi.fn(), update: vi.fn() } })
     await buildService(prisma).refund('u1', 'pay1', { amount: 300, markOriginal: true })
     expect(tx.payment.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ orderId: 'o1', type: 'REFUND', amount: 300, status: 'PAID' }),
@@ -2569,7 +2625,7 @@ describe('PaymentService.refund', () => {
   it('部分退款 → 原节点 PARTIALLY_REFUNDED', async () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PAID', type: 'DEPOSIT', amount: 300, currency: 'CNY', name: '定金' })
-    const tx = withTx(prisma, { payment: { create: jest.fn(), update: jest.fn() } })
+    const tx = withTx(prisma, { payment: { create: vi.fn(), update: vi.fn() } })
     await buildService(prisma).refund('u1', 'pay1', { amount: 100, markOriginal: true })
     expect(tx.payment.update).toHaveBeenCalledWith({ where: { id: 'pay1' }, data: { status: 'PARTIALLY_REFUNDED' } })
   })
@@ -2578,14 +2634,14 @@ describe('PaymentService.refund', () => {
     const prisma = prismaMock()
     prisma.payment.findFirst.mockResolvedValue({ id: 'pay1', orderId: 'o1', status: 'PARTIALLY_REFUNDED', type: 'DEPOSIT', amount: 300, currency: 'CNY', name: '定金' })
     prisma.payment.findMany.mockResolvedValue([{ amount: 100 }])
-    const tx = withTx(prisma, { payment: { create: jest.fn(), update: jest.fn() } })
+    const tx = withTx(prisma, { payment: { create: vi.fn(), update: vi.fn() } })
     await buildService(prisma).refund('u1', 'pay1', { amount: 200, markOriginal: true })
     expect(tx.payment.update).toHaveBeenCalledWith({ where: { id: 'pay1' }, data: { status: 'REFUNDED' } })
   })
 })
 ```
 
-- [ ] **Step 4: 写 controller / module 并运行测试**
+- [x] **Step 4: 写 controller / module 并运行测试**
 
 ```ts
 @ApiTags('payments')
@@ -2645,7 +2701,7 @@ git commit -m "feat(payment): add payment node creation, mark paid with suppleme
 - Consumes: `OrderService.{assertOwned,getDomain,getDetail}`、领域层 `getPlannedReleaseDate` / `isReleased`
 - Produces：`POST /api/orders/:orderId/release/{delay,released,store-arrived,balance-open}`；`ReleaseService.{delay,markReleased,markStoreArrived,openBalance}`
 
-- [ ] **Step 1: 写 DTO**
+- [x] **Step 1: 写 DTO**
 
 ```ts
 // dto/delay-release.dto.ts
@@ -2677,7 +2733,7 @@ export class BalanceOpenDto {
 }
 ```
 
-- [ ] **Step 2: 写 `release.service.ts`**
+- [x] **Step 2: 写 `release.service.ts`**
 
 ```ts
 const DELAYABLE_RELEASED_EVENT_TYPES = ['RELEASED', 'STORE_ARRIVED', 'SHIPMENT_READY']
@@ -2798,7 +2854,7 @@ export class ReleaseService {
 }
 ```
 
-- [ ] **Step 3: 写 `release.service.spec.ts`**
+- [x] **Step 3: 写 `release.service.spec.ts`**
 
 ```ts
 import { ReleaseService } from './release.service'
@@ -2826,16 +2882,16 @@ const orderRow = (patch: Record<string, unknown> = {}) => {
 }
 
 const prismaMock = () => ({
-  releaseEvent: { create: jest.fn() },
-  payment: { update: jest.fn() },
-  $transaction: jest.fn(),
+  releaseEvent: { create: vi.fn() },
+  payment: { update: vi.fn() },
+  $transaction: vi.fn(),
 })
 
 const buildService = (prisma: ReturnType<typeof prismaMock>, order: ReturnType<typeof orderRow>) =>
   new ReleaseService(prisma as never, {
-    assertOwned: jest.fn().mockResolvedValue(undefined),
-    findOwnedWithRelations: jest.fn().mockResolvedValue(order),
-    toDomain: jest.fn().mockReturnValue({
+    assertOwned: vi.fn().mockResolvedValue(undefined),
+    findOwnedWithRelations: vi.fn().mockResolvedValue(order),
+    toDomain: vi.fn().mockReturnValue({
       id: order.id,
       status: order.status,
       archived: false,
@@ -2845,7 +2901,7 @@ const buildService = (prisma: ReturnType<typeof prismaMock>, order: ReturnType<t
       releaseEvents: order.releaseEvents,
       shipments: [],
     }),
-    getDetail: jest.fn().mockResolvedValue({ id: 'o1' }),
+    getDetail: vi.fn().mockResolvedValue({ id: 'o1' }),
   } as never)
 
 const withTx = (prisma: ReturnType<typeof prismaMock>, tx: Record<string, unknown>) => {
@@ -2858,7 +2914,7 @@ const withTx = (prisma: ReturnType<typeof prismaMock>, tx: Record<string, unknow
 describe('ReleaseService.delay', () => {
   it('oldDate 缺省时自动取当前计划出货日', async () => {
     const prisma = prismaMock()
-    const tx = withTx(prisma, { releaseEvent: { create: jest.fn() } })
+    const tx = withTx(prisma, { releaseEvent: { create: vi.fn() } })
     await buildService(prisma, orderRow()).delay('u1', 'o1', { newDate: '2027-05-01' })
     expect(tx.releaseEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -2872,7 +2928,7 @@ describe('ReleaseService.delay', () => {
 
   it('显式传入 oldDate 时以传入值为准', async () => {
     const prisma = prismaMock()
-    const tx = withTx(prisma, { releaseEvent: { create: jest.fn() } })
+    const tx = withTx(prisma, { releaseEvent: { create: vi.fn() } })
     await buildService(prisma, orderRow()).delay('u1', 'o1', { newDate: '2027-05-01', oldDate: '2027-02-01' })
     expect(tx.releaseEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ oldDate: new Date('2027-02-01T00:00:00.000Z') }),
@@ -2883,7 +2939,7 @@ describe('ReleaseService.delay', () => {
     const prisma = prismaMock()
     const order = orderRow({ releaseEvents: releaseEventsOf([{ type: 'RELEASED', newDate: '2027-05-16' }]) })
     await expect(buildService(prisma, order).delay('u1', 'o1', { newDate: '2027-07-01' })).rejects.toMatchObject({
-      code: 'RELEASE_NOT_DELAYABLE',
+      response: { code: 'RELEASE_NOT_DELAYABLE' },
     })
   })
 
@@ -2891,13 +2947,13 @@ describe('ReleaseService.delay', () => {
     const prisma = prismaMock()
     const order = orderRow({ status: 'CANCELLED' })
     await expect(buildService(prisma, order).delay('u1', 'o1', { newDate: '2027-07-01' })).rejects.toMatchObject({
-      code: 'RELEASE_NOT_DELAYABLE',
+      response: { code: 'RELEASE_NOT_DELAYABLE' },
     })
   })
 
   it('延期只新增事件，不修改原计划事件', async () => {
     const prisma = prismaMock()
-    const tx = withTx(prisma, { releaseEvent: { create: jest.fn() } })
+    const tx = withTx(prisma, { releaseEvent: { create: vi.fn() } })
     const order = orderRow()
     await buildService(prisma, order).delay('u1', 'o1', { newDate: '2027-05-01' })
     expect(order.releaseEvents).toHaveLength(1)
@@ -2921,7 +2977,7 @@ describe('ReleaseService.markReleased / markStoreArrived', () => {
     const prisma = prismaMock()
     const order = orderRow({ status: 'REFUNDED' })
     await expect(buildService(prisma, order).markReleased('u1', 'o1', {})).rejects.toMatchObject({
-      code: 'ORDER_NOT_ACTIVE',
+      response: { code: 'ORDER_NOT_ACTIVE' },
     })
   })
 })
@@ -2929,7 +2985,7 @@ describe('ReleaseService.markReleased / markStoreArrived', () => {
 describe('ReleaseService.openBalance', () => {
   it('定位 BALANCE 待付款节点并回写 dueAt', async () => {
     const prisma = prismaMock()
-    const tx = withTx(prisma, { releaseEvent: { create: jest.fn() }, payment: { update: jest.fn() } })
+    const tx = withTx(prisma, { releaseEvent: { create: vi.fn() }, payment: { update: vi.fn() } })
     const order = orderRow({
       payments: [{ id: 'p-balance', type: 'BALANCE', status: 'PENDING', amount: 999 }],
     })
@@ -2945,12 +3001,12 @@ describe('ReleaseService.openBalance', () => {
     const prisma = prismaMock()
     await expect(
       buildService(prisma, orderRow()).openBalance('u1', 'o1', { dueAt: '2027-03-20' }),
-    ).rejects.toMatchObject({ code: 'BALANCE_NOT_FOUND' })
+    ).rejects.toMatchObject({ response: { code: 'BALANCE_NOT_FOUND' } })
   })
 })
 ```
 
-- [ ] **Step 4: 写 controller / module 并运行测试**
+- [x] **Step 4: 写 controller / module 并运行测试**
 
 ```ts
 @ApiTags('release')
@@ -3011,7 +3067,7 @@ git commit -m "feat(release): add delay, released, store-arrived and balance-ope
 - Produces：`POST /api/orders/:orderId/shipments`、`PATCH /api/shipments/:id`、`POST /api/shipments/:id/delivered`；`ShipmentService.{create,update,markDelivered}`
 - 规则（`docs/07 §49-53`）：`ShipmentItem` 必须来自当前订单；同一 `OrderItem` 跨 `Shipment` 的 `quantity` 合计不得超过 `OrderItem.quantity`；有单号/发货时间 → `SHIPPED`，否则 `WAITING`；签收仅允许 `SHIPPED / IN_TRANSIT`。
 
-- [ ] **Step 1: 写 DTO**
+- [x] **Step 1: 写 DTO**
 
 ```ts
 // dto/create-shipment.dto.ts
@@ -3050,7 +3106,7 @@ export class DeliverShipmentDto {
 }
 ```
 
-- [ ] **Step 2: 写 `shipment.service.ts`**
+- [x] **Step 2: 写 `shipment.service.ts`**
 
 ```ts
 @Injectable()
@@ -3175,15 +3231,15 @@ export class ShipmentService {
 }
 ```
 
-- [ ] **Step 3: 写 `shipment.service.spec.ts`**
+- [x] **Step 3: 写 `shipment.service.spec.ts`**
 
 ```ts
 import { ShipmentService } from './shipment.service'
 
 const prismaMock = () => ({
-  shipment: { create: jest.fn().mockResolvedValue({ id: 'sh1' }), update: jest.fn(), findFirst: jest.fn() },
-  shipmentItem: { createMany: jest.fn(), groupBy: jest.fn().mockResolvedValue([]) },
-  $transaction: jest.fn(),
+  shipment: { create: vi.fn().mockResolvedValue({ id: 'sh1' }), update: vi.fn(), findFirst: vi.fn() },
+  shipmentItem: { createMany: vi.fn(), groupBy: vi.fn().mockResolvedValue([]) },
+  $transaction: vi.fn(),
 })
 
 const orderRow = (patch: Record<string, unknown> = {}) => ({
@@ -3198,9 +3254,9 @@ const orderRow = (patch: Record<string, unknown> = {}) => ({
 
 const buildService = (prisma: ReturnType<typeof prismaMock>, order = orderRow()) =>
   new ShipmentService(prisma as never, {
-    findOwnedWithRelations: jest.fn().mockResolvedValue(order),
-    refreshStatus: jest.fn().mockResolvedValue('ACTIVE'),
-    getDetail: jest.fn().mockResolvedValue({ id: 'o1' }),
+    findOwnedWithRelations: vi.fn().mockResolvedValue(order),
+    refreshStatus: vi.fn().mockResolvedValue('ACTIVE'),
+    getDetail: vi.fn().mockResolvedValue({ id: 'o1' }),
   } as never)
 
 describe('ShipmentService.create', () => {
@@ -3208,7 +3264,7 @@ describe('ShipmentService.create', () => {
     const prisma = prismaMock()
     await expect(
       buildService(prisma).create('u1', 'o1', { items: [{ orderItemId: 'other', quantity: 1 }] }),
-    ).rejects.toMatchObject({ code: 'INVALID_SHIPMENT_ITEMS' })
+    ).rejects.toMatchObject({ response: { code: 'INVALID_SHIPMENT_ITEMS' } })
   })
 
   it('拆单超量 → 400 SHIPMENT_QUANTITY_EXCEEDED', async () => {
@@ -3216,13 +3272,13 @@ describe('ShipmentService.create', () => {
     prisma.shipmentItem.groupBy.mockResolvedValue([{ orderItemId: 'oi2', _sum: { quantity: 2 } }])
     await expect(
       buildService(prisma).create('u1', 'o1', { items: [{ orderItemId: 'oi2', quantity: 1 }] }),
-    ).rejects.toMatchObject({ code: 'SHIPMENT_QUANTITY_EXCEEDED' })
+    ).rejects.toMatchObject({ response: { code: 'SHIPMENT_QUANTITY_EXCEEDED' } })
   })
 
   it('合法拆单：A×1 + B×1 后 B 仍可再发 1 件', async () => {
     const prisma = prismaMock()
     prisma.shipmentItem.groupBy.mockResolvedValue([{ orderItemId: 'oi2', _sum: { quantity: 1 } }])
-    const tx = { shipment: { create: jest.fn().mockResolvedValue({ id: 'sh2' }) }, shipmentItem: { createMany: jest.fn() } }
+    const tx = { shipment: { create: vi.fn().mockResolvedValue({ id: 'sh2' }) }, shipmentItem: { createMany: vi.fn() } }
     prisma.$transaction.mockImplementation(async (arg: never) =>
       (arg as unknown as (t: unknown) => Promise<unknown>)(tx),
     )
@@ -3242,7 +3298,7 @@ describe('ShipmentService.create', () => {
 
   it('无单号 → WAITING', async () => {
     const prisma = prismaMock()
-    const tx = { shipment: { create: jest.fn().mockResolvedValue({ id: 'sh3' }) }, shipmentItem: { createMany: jest.fn() } }
+    const tx = { shipment: { create: vi.fn().mockResolvedValue({ id: 'sh3' }) }, shipmentItem: { createMany: vi.fn() } }
     prisma.$transaction.mockImplementation(async (arg: never) =>
       (arg as unknown as (t: unknown) => Promise<unknown>)(tx),
     )
@@ -3255,7 +3311,7 @@ describe('ShipmentService.create', () => {
 
   it('有单号 → SHIPPED 且带发货时间', async () => {
     const prisma = prismaMock()
-    const tx = { shipment: { create: jest.fn().mockResolvedValue({ id: 'sh4' }) }, shipmentItem: { createMany: jest.fn() } }
+    const tx = { shipment: { create: vi.fn().mockResolvedValue({ id: 'sh4' }) }, shipmentItem: { createMany: vi.fn() } }
     prisma.$transaction.mockImplementation(async (arg: never) =>
       (arg as unknown as (t: unknown) => Promise<unknown>)(tx),
     )
@@ -3274,7 +3330,7 @@ describe('ShipmentService.create', () => {
     const prisma = prismaMock()
     await expect(
       buildService(prisma, orderRow({ status: 'CANCELLED' })).create('u1', 'o1', { items: [{ orderItemId: 'oi1', quantity: 1 }] }),
-    ).rejects.toMatchObject({ code: 'ORDER_NOT_ACTIVE' })
+    ).rejects.toMatchObject({ response: { code: 'ORDER_NOT_ACTIVE' } })
   })
 })
 
@@ -3283,7 +3339,7 @@ describe('ShipmentService.markDelivered', () => {
     const prisma = prismaMock()
     prisma.shipment.findFirst.mockResolvedValue({ id: 'sh1', orderId: 'o1', status: 'WAITING', note: null })
     await expect(buildService(prisma).markDelivered('u1', 'sh1', {})).rejects.toMatchObject({
-      code: 'SHIPMENT_NOT_DELIVERABLE',
+      response: { code: 'SHIPMENT_NOT_DELIVERABLE' },
     })
   })
 
@@ -3291,9 +3347,9 @@ describe('ShipmentService.markDelivered', () => {
     const prisma = prismaMock()
     prisma.shipment.findFirst.mockResolvedValue({ id: 'sh1', orderId: 'o1', status: 'IN_TRANSIT', note: null })
     const orderService = {
-      findOwnedWithRelations: jest.fn(),
-      refreshStatus: jest.fn().mockResolvedValue('COMPLETED'),
-      getDetail: jest.fn().mockResolvedValue({ id: 'o1' }),
+      findOwnedWithRelations: vi.fn(),
+      refreshStatus: vi.fn().mockResolvedValue('COMPLETED'),
+      getDetail: vi.fn().mockResolvedValue({ id: 'o1' }),
     }
     const service = new ShipmentService(prisma as never, orderService as never)
 
@@ -3308,7 +3364,7 @@ describe('ShipmentService.markDelivered', () => {
 })
 ```
 
-- [ ] **Step 4: 写 controller / module 并运行测试**
+- [x] **Step 4: 写 controller / module 并运行测试**
 
 ```ts
 @ApiTags('shipments')
@@ -3359,7 +3415,7 @@ git commit -m "feat(shipment): add split shipment creation, status update and de
 - Consumes: P3 全部 API + 真实 Prisma + 假 SupabaseService（只替换身份来源，不替换数据库）
 - Produces: 12 个场景在 `HTTP API → NestJS Service → Prisma Transaction → PostgreSQL` 下的实测证据
 
-- [ ] **Step 1: 写 e2e（真实数据库，只 mock 身份）**
+- [x] **Step 1: 写 e2e（真实数据库，只 mock 身份）**
 
 ```ts
 import { INestApplication } from '@nestjs/common'
@@ -3666,7 +3722,7 @@ describe('Order lifecycle (e2e, real postgres)', () => {
 })
 ```
 
-- [ ] **Step 2: 运行 e2e**
+- [x] **Step 2: 运行 e2e**
 
 Run:
 
@@ -3680,7 +3736,7 @@ Expected: `order-lifecycle.e2e-spec.ts` 全绿（12 个 it 覆盖 A–L + 越权
 
 若失败，按 `superpowers:systematic-debugging` 定位，禁止改断言绕过。
 
-- [ ] **Step 3: 写验收记录并汇报**
+- [x] **Step 3: 写验收记录并汇报**
 
 `docs/superpowers/verification/2026-09-18-P3-verification.md` 记录：每个场景的请求、期望、实际、结论。
 

@@ -8,6 +8,30 @@
 
 **Tech Stack:** Vue 3.5 / TypeScript 5.6 / Vite 5 / Vue Router 4 / Pinia 2 / Element Plus 2 / TanStack Query 5 / Axios / dayjs / ECharts 5 / FullCalendar 6 / Zod / VueUse / Vitest 2 + @vue/test-utils。
 
+## 环境偏差（P1 实测结论，本计划执行时必须遵守）
+
+P1 落地时依赖取最新，实际工具链与计划原文不同，执行本计划前先读这段：
+
+| 项 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| 测试框架 | Jest 30 + ts-jest | **Vitest 5 + unplugin-swc** | NestJS 12 全系 ESM-only，Jest 30 无法 `require()` 它；Vitest 在 Node 22 上原生跑 ESM |
+| 测试写法 | `jest.fn()` | `vi.fn()`（已批量替换）；spec 内用全局 `describe/it/expect` | 同上 |
+| 命令 | `pnpm --filter @hobilog/server test` / `test:e2e` | 同（内部为 `vitest run src` / `vitest run test`） | 配置在 `apps/server/vitest.config.mts` |
+| Prisma Client 导入 | `from '@prisma/client'` | **`from '<相对深度>/generated/prisma/client'`** | Prisma 7 客户端生成到 `apps/server/src/generated/prisma` |
+| Prisma 命名空间 | `import { Prisma } from '@prisma/client'` | `import { Prisma } from '<相对深度>/generated/prisma/client'`（含 `Prisma.Decimal` / `Prisma.sql` / `Prisma.empty` / `Prisma.PrismaClientKnownRequestError`） | 同上 |
+| PrismaClient 实例化 | `new PrismaClient()` | 已封装在 `PrismaService`（内部 `new PrismaPg({ connectionString })`） | Prisma 7 要求 driver adapter |
+| TypeScript | 5.6 | 6.0.3 | TS 7.0 只有原生 `tsc`、无编程式 compiler API，`nest build`（Nest CLI 12）不可用 |
+| NestJS | 10 | 12.0.3（Express 5，`@types/express` 5.x） | 取最新 |
+| 分页/错误体 | `PaginationQueryDto` / `BusinessException` / `mapException` | 与计划一致（P1 已实现，直接复用） | — |
+
+相对深度速查（导入生成客户端时）：
+- `src/modules/<module>/*.ts` → `'../../generated/prisma/client'`
+- `src/modules/<module>/<sub>/*.ts` → `'../../../generated/prisma/client'`
+- `src/common/<sub>/*.ts` → `'../../generated/prisma/client'`
+- 测试（`apps/server/test/*.ts`） → `'../src/generated/prisma/client'`；e2e 里 `overrideProvider(PrismaService)` 的 mock 需额外提供 `$queryRaw`
+
+---
+
 ## Global Constraints
 
 沿用 roadmap 全量约束。P5 追加：

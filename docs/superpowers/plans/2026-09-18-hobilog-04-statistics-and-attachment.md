@@ -8,6 +8,37 @@
 
 **Tech Stack:** 复用 P1–P3；新增 `@supabase/supabase-js` 的 Storage API（已装依赖）。
 
+## 环境偏差（P1 实测结论，本计划执行时必须遵守）
+
+P1 落地时依赖取最新，实际工具链与计划原文不同，执行本计划前先读这段：
+
+| 项 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| 测试框架 | Jest 30 + ts-jest | **Vitest 5 + unplugin-swc** | NestJS 12 全系 ESM-only，Jest 30 无法 `require()` 它；Vitest 在 Node 22 上原生跑 ESM |
+| 测试写法 | `jest.fn()` | `vi.fn()`（已批量替换）；spec 内用全局 `describe/it/expect` | 同上 |
+| 命令 | `pnpm --filter @hobilog/server test` / `test:e2e` | 同（内部为 `vitest run src` / `vitest run test`） | 配置在 `apps/server/vitest.config.mts` |
+| Prisma Client 导入 | `from '@prisma/client'` | **`from '<相对深度>/generated/prisma/client'`** | Prisma 7 客户端生成到 `apps/server/src/generated/prisma` |
+| Prisma 命名空间 | `import { Prisma } from '@prisma/client'` | `import { Prisma } from '<相对深度>/generated/prisma/client'`（含 `Prisma.Decimal` / `Prisma.sql` / `Prisma.empty` / `Prisma.PrismaClientKnownRequestError`） | 同上 |
+| PrismaClient 实例化 | `new PrismaClient()` | 已封装在 `PrismaService`（内部 `new PrismaPg({ connectionString })`） | Prisma 7 要求 driver adapter |
+| TypeScript | 5.6 | 6.0.3 | TS 7.0 只有原生 `tsc`、无编程式 compiler API，`nest build`（Nest CLI 12）不可用 |
+| NestJS | 10 | 12.0.3（Express 5，`@types/express` 5.x） | 取最新 |
+| 分页/错误体 | `PaginationQueryDto` / `BusinessException` / `mapException` | 与计划一致（P1 已实现，直接复用） | — |
+
+相对深度速查（导入生成客户端时）：
+- `src/modules/<module>/*.ts` → `'../../generated/prisma/client'`
+- `src/modules/<module>/<sub>/*.ts` → `'../../../generated/prisma/client'`
+- `src/common/<sub>/*.ts` → `'../../generated/prisma/client'`
+- 测试（`apps/server/test/*.ts`） → `'../src/generated/prisma/client'`；e2e 里 `overrideProvider(PrismaService)` 的 mock 需额外提供 `$queryRaw`
+
+## 执行偏差记录（P2 实测）
+
+| 位置 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| 错误码断言 | `toMatchObject({ code: 'XXX' })` | `toMatchObject({ response: { code: 'XXX' } })` | `BusinessException` 继承 `HttpException`，`code` 在 `getResponse()` 返回体里，不是异常顶层自有属性（P2 实测踩过，本计划已修正） |
+| 模块结构 | 单文件内联 VO | 每模块 `mapper/<name>.mapper.ts` + `.spec.ts` | 与 P2 的 product / platform / store 保持一致 |
+
+---
+
 ## Global Constraints
 
 沿用 roadmap 全量约束。P4 追加：
@@ -523,14 +554,14 @@ function getStatus(order: { status: string; payments: unknown; shipments: unknow
 import { StatisticsService } from './statistics.service'
 
 const prismaMock = () => ({
-  payment: { findMany: jest.fn().mockResolvedValue([]) },
-  order: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
-  $queryRaw: jest.fn().mockResolvedValue([]),
+  payment: { findMany: vi.fn().mockResolvedValue([]) },
+  order: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
+  $queryRaw: vi.fn().mockResolvedValue([]),
 })
 
 const repositoryMock = () => ({
-  dimension: jest.fn().mockResolvedValue([]),
-  topCollections: jest.fn().mockResolvedValue([{ count: 3 }]),
+  dimension: vi.fn().mockResolvedValue([]),
+  topCollections: vi.fn().mockResolvedValue([{ count: 3 }]),
 })
 
 const build = (prisma: ReturnType<typeof prismaMock>, repository = repositoryMock()) =>
@@ -928,7 +959,7 @@ export class CollectionService {
 `calendar.service.spec.ts`：
 
 ```ts
-const prismaMock = () => ({ order: { findMany: jest.fn().mockResolvedValue([]) } })
+const prismaMock = () => ({ order: { findMany: vi.fn().mockResolvedValue([]) } })
 
 it('付款截止日落在区间内才产出 PAYMENT_DUE', async () => { /* 构造 1 个订单 + 2 个 payment，断言只返回区间内的那条 */ })
 it('同一天事件按 PAYMENT_DUE > DELIVERY > EXPECTED_RELEASE 排序', async () => { /* 同日期三类事件混排断言顺序 */ })
@@ -943,7 +974,7 @@ it('多包裹时取最早一次签收时间', async () => { /* 两个 shipmentIt
 it('stats 按币种分开汇总', async () => { /* CNY 与 JPY 分别聚合，断言不合并 */ })
 ```
 
-两个 spec 的 `$transaction` 用 `jest.fn(async operations => Promise.all(operations))`，与 P2/P3 一致。
+两个 spec 的 `$transaction` 用 `vi.fn(async operations => Promise.all(operations))`，与 P2/P3 一致。
 
 - [ ] **Step 4: 写 controller / module 并运行测试**
 
@@ -1193,20 +1224,20 @@ import { AttachmentService } from './attachment.service'
 
 const prismaMock = () => ({
   attachment: {
-    create: jest.fn().mockResolvedValue({
+    create: vi.fn().mockResolvedValue({
       id: 'a1', type: 'PAYMENT_PROOF', fileName: 'invoice.png', storagePath: 'attachments/u1/o1/x.png',
       mimeType: 'image/png', fileSize: BigInt(2048), createdAt: new Date('2026-09-18T00:00:00.000Z'),
     }),
-    findFirst: jest.fn(),
-    delete: jest.fn(),
+    findFirst: vi.fn(),
+    delete: vi.fn(),
   },
 })
 
 const storageMock = () => ({
-  from: jest.fn().mockReturnValue({
-    createSignedUploadUrl: jest.fn().mockResolvedValue({ data: { token: 't', signedUrl: 'https://signed' }, error: null }),
-    createSignedUrl: jest.fn().mockResolvedValue({ data: { signedUrl: 'https://download' }, error: null }),
-    remove: jest.fn().mockResolvedValue({ data: null, error: null }),
+  from: vi.fn().mockReturnValue({
+    createSignedUploadUrl: vi.fn().mockResolvedValue({ data: { token: 't', signedUrl: 'https://signed' }, error: null }),
+    createSignedUrl: vi.fn().mockResolvedValue({ data: { signedUrl: 'https://download' }, error: null }),
+    remove: vi.fn().mockResolvedValue({ data: null, error: null }),
   }),
 })
 
@@ -1214,8 +1245,8 @@ const build = (prisma: ReturnType<typeof prismaMock>, storage = storageMock()) =
   new AttachmentService(
     prisma as never,
     { admin: { storage } } as never,
-    { assertOwned: jest.fn().mockResolvedValue(undefined) } as never,
-    { getOwnedProductIds: jest.fn().mockResolvedValue(['p1']) } as never,
+    { assertOwned: vi.fn().mockResolvedValue(undefined) } as never,
+    { getOwnedProductIds: vi.fn().mockResolvedValue(['p1']) } as never,
   )
 
 describe('AttachmentService.createUploadUrl', () => {
@@ -1236,8 +1267,8 @@ describe('AttachmentService.createUploadUrl', () => {
     const service = new AttachmentService(
       prisma as never,
       { admin: { storage: storageMock() } } as never,
-      { assertOwned: jest.fn().mockRejectedValue(Object.assign(new Error('nf'), { status: 404 })) } as never,
-      { getOwnedProductIds: jest.fn() } as never,
+      { assertOwned: vi.fn().mockRejectedValue(Object.assign(new Error('nf'), { status: 404 })) } as never,
+      { getOwnedProductIds: vi.fn() } as never,
     )
     await expect(
       service.createUploadUrl('u1', {
@@ -1255,7 +1286,7 @@ describe('AttachmentService.create', () => {
       build(prisma).create('u1', {
         bucket: 'attachments', storagePath: 'u-not-mine/o1/x.png', type: 'PAYMENT_PROOF', fileName: 'x.png',
       }),
-    ).rejects.toMatchObject({ code: 'INVALID_STORAGE_PATH' })
+    ).rejects.toMatchObject({ response: { code: 'INVALID_STORAGE_PATH' } })
   })
 
   it('fileSize 出口为 string', async () => {
@@ -1285,7 +1316,7 @@ describe('AttachmentService.remove', () => {
   it('不存在 → 404 ATTACHMENT_NOT_FOUND', async () => {
     const prisma = prismaMock()
     prisma.attachment.findFirst.mockResolvedValue(null)
-    await expect(build(prisma).remove('u1', 'a1')).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' })
+    await expect(build(prisma).remove('u1', 'a1')).rejects.toMatchObject({ response: { code: 'ATTACHMENT_NOT_FOUND' } })
   })
 })
 ```

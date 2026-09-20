@@ -8,6 +8,28 @@
 
 **Tech Stack:** pnpm 9 / Node >= 20.11 / TypeScript 5.6 / NestJS 10.4 / Prisma 5.22 / class-validator / @nestjs/swagger / Jest 29 + Supertest 7 / Vitest 2。
 
+## 执行结果与偏差记录（2026-09-18 实测）
+
+P1 已按本计划完成，实测中必须偏离原文的点（P2–P5 请以这里为准）：
+
+| 项 | 计划原文 | 实际 |
+| --- | --- | --- |
+| 包管理 | `packageManager: pnpm@9.12.0` | `pnpm@12.4.2`（本机版本），`pnpm-workspace.yaml` 增加 `allowBuilds` 放行 prisma / @prisma/engines / @swc/core / @parcel/watcher / unrs-resolver |
+| Node | >= 20.11 | >= 22.12.0（Prisma 7 要求 `^20.19 || ^22.12 || >=24`） |
+| TypeScript | 5.6 | **6.0.3**（TS 7.0 只发原生 `tsc`、不导出编程式 compiler API，`nest build` 报错；API 预计 7.1 回归） |
+| Nest | 10.x | **12.0.3**（ESM-only，Express 5 → `@types/express` 5.x） |
+| 测试 | Jest 30 + ts-jest | **Vitest 5 + unplugin-swc**（Jest 无法 require ESM-only 的 Nest；`jest.fn()` → `vi.fn()`）；`test` = `vitest run src`，`test:e2e` = `vitest run test` |
+| Prisma | 5.22 + `url/directUrl` in schema | **7.10.0**：schema 无 url，连接串在 `prisma7.config.ts`；generator `prisma-client` 输出到 `src/generated/prisma`；运行期用 `@prisma/adapter-pg`；代码从生成目录导入 `Prisma` / `PrismaClient` |
+| tsconfig | `baseUrl` + `paths` 指向 shared src | TS 6 弃用 `baseUrl`；`paths` 指向 shared src 会触发 rootDir 报错 → 改为依赖 workspace 产物；显式 `types: ["node", "vitest/globals"]`；`tsconfig.build.json` 显式 `rootDir: "src"` |
+| DIRECT_URL | Supabase 直连域名 | 本机不可达（IPv6-only）→ 与 `DATABASE_URL` 同用 Session pooler |
+
+验证结果：`pnpm -r build` ✓ / `pnpm -r test` ✓（shared 14 + server 15）/ `pnpm -r typecheck` ✓ /
+`test:e2e` ✓（6）/ `pnpm db:status` → `1 migration found` + `Database schema is up to date!` ✓ /
+`/api/docs` 200 ✓ / `/api/health` ✓ / `/api/health/db` `{"status":"ok","database":"up"}` ✓ /
+`/api/nope` → `{"statusCode":404,"code":"NOT_FOUND",...}` ✓
+
+---
+
 ## Global Constraints
 
 与 `docs/superpowers/plans/2026-09-18-hobilog-v0.1-roadmap.md` 的「全局约束」一致，P1 额外注意：

@@ -8,6 +8,43 @@
 
 **Tech Stack:** 复用 P1 全栈（NestJS 10 / Prisma 5 / @supabase/supabase-js 2 / class-validator / Jest + Supertest）。
 
+## 环境偏差（P1 实测结论，本计划执行时必须遵守）
+
+P1 落地时依赖取最新，实际工具链与计划原文不同，执行本计划前先读这段：
+
+| 项 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| 测试框架 | Jest 30 + ts-jest | **Vitest 5 + unplugin-swc** | NestJS 12 全系 ESM-only，Jest 30 无法 `require()` 它；Vitest 在 Node 22 上原生跑 ESM |
+| 测试写法 | `jest.fn()` | `vi.fn()`（已批量替换）；spec 内用全局 `describe/it/expect` | 同上 |
+| 命令 | `pnpm --filter @hobilog/server test` / `test:e2e` | 同（内部为 `vitest run src` / `vitest run test`） | 配置在 `apps/server/vitest.config.mts` |
+| Prisma Client 导入 | `from '@prisma/client'` | **`from '<相对深度>/generated/prisma/client'`** | Prisma 7 客户端生成到 `apps/server/src/generated/prisma` |
+| Prisma 命名空间 | `import { Prisma } from '@prisma/client'` | `import { Prisma } from '<相对深度>/generated/prisma/client'`（含 `Prisma.Decimal` / `Prisma.sql` / `Prisma.empty` / `Prisma.PrismaClientKnownRequestError`） | 同上 |
+| PrismaClient 实例化 | `new PrismaClient()` | 已封装在 `PrismaService`（内部 `new PrismaPg({ connectionString })`） | Prisma 7 要求 driver adapter |
+| TypeScript | 5.6 | 6.0.3 | TS 7.0 只有原生 `tsc`、无编程式 compiler API，`nest build`（Nest CLI 12）不可用 |
+| NestJS | 10 | 12.0.3（Express 5，`@types/express` 5.x） | 取最新 |
+| 分页/错误体 | `PaginationQueryDto` / `BusinessException` / `mapException` | 与计划一致（P1 已实现，直接复用） | — |
+
+相对深度速查（导入生成客户端时）：
+- `src/modules/<module>/*.ts` → `'../../generated/prisma/client'`
+- `src/modules/<module>/<sub>/*.ts` → `'../../../generated/prisma/client'`
+- `src/common/<sub>/*.ts` → `'../../generated/prisma/client'`
+- 测试（`apps/server/test/*.ts`） → `'../src/generated/prisma/client'`；e2e 里 `overrideProvider(PrismaService)` 的 mock 需额外提供 `$queryRaw`
+
+## 执行偏差记录（P2 实测）
+
+| 位置 | 计划/初版写法 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| `products` e2e mock（Task 2） | 抛 `new Error` 且挂 `status: 401` | 抛 `BusinessException(401)` | 裸 `Error` 会被 `AllExceptionsFilter` 映射成 500，断言不到 401 |
+| `product/mapper/product.mapper.ts`（Task 4） | `from '../../generated/prisma/client'` | `from '../../../generated/prisma/client'` | `mapper/` 多一层目录，深度按上面「相对深度速查」 |
+| `product.service.spec.ts` 归档 404 断言（Task 4） | `toMatchObject({ status: 404, code: 'PRODUCT_NOT_FOUND' })` | `toMatchObject({ status: 404, response: { statusCode, code, message } })` | `BusinessException` 继承 `HttpException`，`code` 在 `getResponse()` 里，不是异常的顶层自有属性 |
+| `assertOwned` 归属校验（Task 5 / 6） | 实现片段抛 400 `INVALID_PLATFORM` / `INVALID_STORE`（与同 Task spec 标题「抛 404」自相矛盾） | 统一 404 `PLATFORM_NOT_FOUND` / `STORE_NOT_FOUND` | 单个资源「不存在或不属于当前用户」与 Product 一致地返回 404；400 `INVALID_*` 保留给批量 id 校验（P3 的 `INVALID_PRODUCTS`） |
+| Platform / Store VO 位置（Task 5 / 6） | `toPlatformVo` / `toStoreVo` 内联在 service | 拆到 `modules/<m>/mapper/<m>.mapper.ts` + `.spec.ts` | 与既有 product 模块结构一致 |
+| 实体 `name` 校验（Task 4 / 5 / 6） | `@IsString() @MaxLength(...)`（`""` 可通过） | 追加 `@IsNotEmpty()` | Task 7 实测 `POST /api/products {"name":""}` 曾返回 201 |
+| 接口文档同步（Task 7 Step 1） | 「如 P2 接口与文档不一致，更新对应清单」 | `docs/05` 新增 §13 Platform API、§14 Store API，原 13–20 节顺延为 15–22；§12 Product API 补充筛选与错误码 | 与真实路由（`/api/platforms`、`/api/stores`）对齐 |
+| 测试用户创建方式（Task 7 Step 2） | 「在 Supabase 控制台创建两个测试用户」 | 用服务端 `SUPABASE_SECRET_KEY` 走 Admin API 创建 `a@hobilog.dev` / `b@hobilog.dev` | 免手工操作，且 secret key 只存在于 server |
+
+---
+
 ## Global Constraints
 
 沿用 roadmap 全局约束。P2 追加：
@@ -45,7 +82,7 @@
   - `IS_PUBLIC_KEY` / `@Public()`
   - `AuthModule`（`@Global()`，导出 `SupabaseService`）
 
-- [ ] **Step 1: 扩展 env 校验测试（先失败）**
+- [x] **Step 1: 扩展 env 校验测试（先失败）**
 
 在 `apps/server/src/config/env.validation.spec.ts` 的 `validRaw` 中补入 Supabase 三项：
 
@@ -71,7 +108,7 @@ it('同时缺少多项时全部列出', () => {
 
 Run: `pnpm --filter @hobilog/server test` → Expected: FAIL（缺少 SUPABASE_* 校验）。
 
-- [ ] **Step 2: 实现 env 扩展**
+- [x] **Step 2: 实现 env 扩展**
 
 `src/config/env.validation.ts` 的 `REQUIRED_KEYS` 与 `AppEnv`：
 
@@ -118,7 +155,7 @@ process.env.SUPABASE_SECRET_KEY ??= 'sb_secret_test'
 
 Run: `pnpm --filter @hobilog/server test` → Expected: PASS。
 
-- [ ] **Step 3: 写失败的 `supabase.service.spec.ts`**
+- [x] **Step 3: 写失败的 `supabase.service.spec.ts`**
 
 ```ts
 import { BusinessException } from '../../common/exceptions/business.exception'
@@ -142,9 +179,9 @@ describe('extractBearerToken', () => {
 
 describe('SupabaseService.getUserFromToken', () => {
   const build = (result: unknown) => {
-    const service = new SupabaseService({ get: () => 'http://localhost' } as never)
+    const service = new SupabaseService({ get: (key: string) => process.env[key] } as never)
     Object.assign(service, {
-      authClient: { auth: { getUser: jest.fn().mockResolvedValue(result) } },
+      authClient: { auth: { getUser: vi.fn().mockResolvedValue(result) } },
     })
     return service
   }
@@ -172,7 +209,7 @@ describe('SupabaseService.getUserFromToken', () => {
 })
 ```
 
-- [ ] **Step 4: 实现 `auth.types.ts` 与 `supabase.service.ts`**
+- [x] **Step 4: 实现 `auth.types.ts` 与 `supabase.service.ts`**
 
 `src/modules/auth/auth.types.ts`:
 
@@ -206,7 +243,7 @@ export function extractBearerToken(header?: string): string | null {
 @Injectable()
 export class SupabaseService {
   readonly admin: SupabaseClient
-  private readonly authClient: SupabaseClient
+  private authClient: SupabaseClient
 
   constructor(private readonly config: ConfigService) {
     const url = this.config.get<string>('SUPABASE_URL') ?? 'http://localhost'
@@ -226,9 +263,9 @@ export class SupabaseService {
 }
 ```
 
-说明：测试通过 `new SupabaseService({ get: () => 'http://localhost' } as never)` 构造，再用 `Object.assign` 覆盖 `authClient` 为 mock（见 Step 3），因此不需要真实网络与真实 key。
+说明：`authClient` 声明为 `private`（非 readonly），测试用 `new SupabaseService({ get: key => process.env[key] } as never)` 构造，再用 `Object.assign` 覆盖 `authClient` 为 mock（见 Step 3），因此不需要真实网络与真实 key；`test/setup-env.ts` 提供的 dummy 值也保证 `createClient` 不会因 URL 非法而抛错。
 
-- [ ] **Step 5: 写 `Public` 装饰器与 `AuthModule`**
+- [x] **Step 5: 写 `Public` 装饰器与 `AuthModule`**
 
 `src/common/decorators/public.decorator.ts`:
 
@@ -286,7 +323,7 @@ git commit -m "feat(auth): add supabase client, token parsing and public decorat
   - `@CurrentUser() user: AuthUser`
   - 测试用 `ProbeController`：`GET /api/probe/me` → `{ id, email? }`
 
-- [ ] **Step 1: 写失败的 `user-profile.service.spec.ts`**
+- [x] **Step 1: 写失败的 `user-profile.service.spec.ts`**
 
 ```ts
 import { UserProfileService } from './user-profile.service'
@@ -294,7 +331,7 @@ import { UserProfileService } from './user-profile.service'
 describe('UserProfileService.ensureProfile', () => {
   it('已存在时直接返回，不写库', async () => {
     const prisma = {
-      userProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'u1' }), create: jest.fn() },
+      userProfile: { findUnique: vi.fn().mockResolvedValue({ id: 'u1' }), create: vi.fn() },
     }
     const service = new UserProfileService(prisma as never)
     await expect(service.ensureProfile({ id: 'u1' })).resolves.toEqual({ id: 'u1' })
@@ -304,8 +341,8 @@ describe('UserProfileService.ensureProfile', () => {
   it('不存在时创建（username 为空）', async () => {
     const prisma = {
       userProfile: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ id: 'u2' }),
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: 'u2' }),
       },
     }
     const service = new UserProfileService(prisma as never)
@@ -321,7 +358,7 @@ describe('UserProfileService.ensureProfile', () => {
           .fn()
           .mockResolvedValueOnce(null)
           .mockResolvedValueOnce({ id: 'u3' }),
-        create: jest.fn().mockRejectedValue(conflict),
+        create: vi.fn().mockRejectedValue(conflict),
       },
     }
     const service = new UserProfileService(prisma as never)
@@ -330,7 +367,7 @@ describe('UserProfileService.ensureProfile', () => {
 })
 ```
 
-- [ ] **Step 2: 实现 `user-profile.service.ts`**
+- [x] **Step 2: 实现 `user-profile.service.ts`**
 
 ```ts
 import { Injectable } from '@nestjs/common'
@@ -365,7 +402,7 @@ export class UserProfileService {
 }
 ```
 
-- [ ] **Step 3: 写失败的 `supabase-auth.guard.spec.ts`**
+- [x] **Step 3: 写失败的 `supabase-auth.guard.spec.ts`**
 
 ```ts
 import { ExecutionContext } from '@nestjs/common'
@@ -383,9 +420,9 @@ function contextWith(headers: Record<string, string>, handler: () => void = () =
 
 describe('SupabaseAuthGuard', () => {
   const build = (isPublic = false) => {
-    const reflector = { getAllAndOverride: jest.fn().mockReturnValue(isPublic) } as unknown as Reflector
-    const supabase = { getUserFromToken: jest.fn().mockResolvedValue({ id: 'u1' }) }
-    const profiles = { ensureProfile: jest.fn().mockResolvedValue({ id: 'u1' }) }
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(isPublic) } as unknown as Reflector
+    const supabase = { getUserFromToken: vi.fn().mockResolvedValue({ id: 'u1' }) }
+    const profiles = { ensureProfile: vi.fn().mockResolvedValue({ id: 'u1' }) }
     return { guard: new SupabaseAuthGuard(reflector, supabase as never, profiles as never), supabase, profiles }
   }
 
@@ -418,7 +455,7 @@ describe('SupabaseAuthGuard', () => {
 })
 ```
 
-- [ ] **Step 4: 实现 guard 与 `@CurrentUser()`**
+- [x] **Step 4: 实现 guard 与 `@CurrentUser()`**
 
 `src/modules/auth/supabase-auth.guard.ts`:
 
@@ -501,7 +538,7 @@ export class AuthModule {}
 
 Run: `pnpm --filter @hobilog/server test` → Expected: guard 与服务用例 PASS。
 
-- [ ] **Step 5: 写认证 e2e（探针控制器）**
+- [x] **Step 5: 写认证 e2e（探针控制器）**
 
 `apps/server/test/probe.controller.ts`:
 
@@ -522,10 +559,11 @@ export class ProbeController {
 `apps/server/test/auth.e2e-spec.ts`:
 
 ```ts
-import { INestApplication } from '@nestjs/common'
+import { HttpStatus, INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import request from 'supertest'
 import { AppModule } from '../src/app.module'
+import { BusinessException } from '../src/common/exceptions/business.exception'
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter'
 import { PrismaService } from '../src/database/prisma.service'
 import { SupabaseService } from '../src/modules/auth/supabase.service'
@@ -554,7 +592,7 @@ describe('AuthGuard (e2e)', () => {
         admin: {},
         getUserFromToken: async (token: string) => {
           if (token === 'good-token') return { id: 'user-a', email: 'a@hobilog.dev' }
-          throw Object.assign(new Error('invalid'), { status: 401 })
+          throw new BusinessException(HttpStatus.UNAUTHORIZED, 'UNAUTHORIZED', '令牌无效或已过期')
         },
       })
       .compile()
@@ -588,7 +626,11 @@ describe('AuthGuard (e2e)', () => {
       .get('/api/probe/me')
       .set('Authorization', 'Bearer bad-token')
     expect(res.status).toBe(401)
-    expect(res.body.code).toBe('UNAUTHORIZED')
+    expect(res.body).toEqual({
+      statusCode: 401,
+      code: 'UNAUTHORIZED',
+      message: '令牌无效或已过期',
+    })
   })
 
   it('健康检查仍可匿名访问', async () => {
@@ -624,10 +666,10 @@ git commit -m "feat(auth): add global supabase auth guard, user profile bootstra
   - `toIsoString(value: Date | null | undefined): string | null`
   - `SortOrderQueryDto`（`sortBy?: string`、`sortOrder?: 'asc' | 'desc'`，默认 `desc`）
 
-- [ ] **Step 1: 写失败测试 `serialize.spec.ts`**
+- [x] **Step 1: 写失败测试 `serialize.spec.ts`**
 
 ```ts
-import { Prisma } from '@prisma/client'
+import { Prisma } from '../../generated/prisma/client'
 import { toDateString, toIsoString, toNumber } from './serialize'
 
 describe('toNumber', () => {
@@ -666,12 +708,12 @@ describe('toIsoString', () => {
 })
 ```
 
-- [ ] **Step 2: 实现 `serialize.ts` 与 `sort-query.dto.ts`**
+- [x] **Step 2: 实现 `serialize.ts` 与 `sort-query.dto.ts`**
 
 `src/common/utils/serialize.ts`:
 
 ```ts
-import { Prisma } from '@prisma/client'
+import { Prisma } from '../../generated/prisma/client'
 
 export function toNumber(value: Prisma.Decimal | number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null
@@ -737,10 +779,10 @@ git commit -m "feat(common): add decimal/date serializers and sort query dto"
   - `ProductVo`：`{ id, name, originalName, coverUrl, category, ipName, characterName, manufacturer, seriesName, scale, version, sku, officialPrice: number | null, officialCurrency, announcedAt: string | null, originalReleaseDate: string | null, releaseDatePrecision, description, status, createdAt, updatedAt, tagIds: string[] }`
   - `ProductService.getOwnedProductIds(userId, ids): Promise<string[]>`（P3 创建订单复用）
 
-- [ ] **Step 1: 写失败的 `product.mapper.spec.ts`**
+- [x] **Step 1: 写失败的 `product.mapper.spec.ts`**
 
 ```ts
-import { Prisma } from '@prisma/client'
+import { Prisma } from '../../../../generated/prisma/client'
 import { toProductVo } from './product.mapper'
 
 const base = {
@@ -789,12 +831,12 @@ describe('toProductVo', () => {
 })
 ```
 
-- [ ] **Step 2: 实现 mapper 与 DTO**
+- [x] **Step 2: 实现 mapper 与 DTO**
 
 `src/modules/product/mapper/product.mapper.ts`（入参类型用 `Prisma.ProductGetPayload<{ include: { productTags: true } }>`）：
 
 ```ts
-import type { Prisma } from '@prisma/client'
+import type { Prisma } from '../../../generated/prisma/client'
 import { toDateString, toIsoString, toNumber } from '../../../common/utils/serialize'
 
 type ProductWithTags = Prisma.ProductGetPayload<{ include: { productTags: true } }>
@@ -955,7 +997,7 @@ export class QueryProductDto extends PaginationQueryDto {
 }
 ```
 
-- [ ] **Step 3: 写失败的 `product.service.spec.ts`**
+- [x] **Step 3: 写失败的 `product.service.spec.ts`**
 
 ```ts
 import { BusinessException } from '../../common/exceptions/business.exception'
@@ -963,14 +1005,14 @@ import { ProductService } from './product.service'
 
 const prismaMock = () => ({
   product: {
-    findMany: jest.fn().mockResolvedValue([]),
-    count: jest.fn().mockResolvedValue(0),
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
+    findMany: vi.fn().mockResolvedValue([]),
+    count: vi.fn().mockResolvedValue(0),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
   },
-  tag: { upsert: jest.fn().mockResolvedValue({ id: 't1' }) },
-  $transaction: jest.fn(async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[])),
+  tag: { upsert: vi.fn().mockResolvedValue({ id: 't1' }) },
+  $transaction: vi.fn(async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[])),
 })
 
 describe('ProductService', () => {
@@ -1034,13 +1076,13 @@ describe('ProductService', () => {
 })
 ```
 
-- [ ] **Step 4: 实现 `product.service.ts` / `product.controller.ts` / `product.module.ts`**
+- [x] **Step 4: 实现 `product.service.ts` / `product.controller.ts` / `product.module.ts`**
 
 `src/modules/product/product.service.ts`:
 
 ```ts
 import { Injectable } from '@nestjs/common'
-import type { Prisma } from '@prisma/client'
+import type { Prisma } from '../../generated/prisma/client'
 import { PrismaService } from '../../database/prisma.service'
 import { toPaginated } from '../../common/types/paginated'
 import type { Paginated } from '@hobilog/shared'
@@ -1275,7 +1317,7 @@ export class ProductModule {}
 
 `app.module.ts` imports 追加 `ProductModule`。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run:
 
@@ -1284,7 +1326,7 @@ pnpm --filter @hobilog/server test
 pnpm --filter @hobilog/server typecheck
 ```
 
-Expected: mapper + service + 既有用例全绿；typecheck 无错误。
+Expected: mapper + service + 既有用例全绿；typecheck 无错误。（实测：10 files / 51 tests 全绿；typecheck、`nest build` 均无错误）
 
 - [ ] **Step 6: 提交（需用户授权）**
 
@@ -1315,22 +1357,22 @@ git commit -m "feat(product): add product crud with ownership isolation and tagg
   - `PlatformService.assertOwned(userId, platformId): Promise<void>`（供 Store / Order 复用）
   - 预置名称常量：`['淘宝','京东','Bilibili 会员购','Hpoi','AmiAmi','Good Smile','闲鱼','其他']`（来源 `docs/03 §39`）
 
-- [ ] **Step 1: 写失败的 `platform.service.spec.ts`**
+- [x] **Step 1: 写失败的 `platform.service.spec.ts`**
 
 ```ts
 import { PlatformService } from './platform.service'
 
 const prismaMock = () => ({
   platform: {
-    findMany: jest.fn().mockResolvedValue([]),
-    count: jest.fn().mockResolvedValue(0),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-    findFirst: jest.fn(),
-    createMany: jest.fn().mockResolvedValue({ count: 2 }),
+    findMany: vi.fn().mockResolvedValue([]),
+    count: vi.fn().mockResolvedValue(0),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    findFirst: vi.fn(),
+    createMany: vi.fn().mockResolvedValue({ count: 2 }),
   },
-  $transaction: jest.fn(async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[])),
+  $transaction: vi.fn(async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[])),
 })
 
 describe('PlatformService', () => {
@@ -1368,7 +1410,7 @@ describe('PlatformService', () => {
 })
 ```
 
-- [ ] **Step 2: 实现 DTO / service / controller / module**
+- [x] **Step 2: 实现 DTO / service / controller / module**
 
 `dto/create-platform.dto.ts`:
 
@@ -1399,7 +1441,7 @@ export class CreatePlatformDto {
 `dto/update-platform.dto.ts`：`export class UpdatePlatformDto extends PartialType(CreatePlatformDto) {}`
 `dto/query-platform.dto.ts`：`export class QueryPlatformDto extends PaginationQueryDto { @IsOptional() @IsString() keyword?: string }`
 
-`src/modules/platform/platform.service.ts` 关键实现：
+`src/modules/platform/platform.service.ts` 关键实现（文件顶部导入：`import { HttpStatus, Injectable } from '@nestjs/common'`、`import type { Prisma } from '../../generated/prisma/client'`、`BusinessException`、`PrismaService`、`toPaginated`、`Paginated`、DTO 与 `PlatformVo`）：
 
 ```ts
 const PRESET_PLATFORM_NAMES = [
@@ -1482,10 +1524,10 @@ export function toPlatformVo(platform: PlatformWithCount): PlatformVo {
 
 `platform.controller.ts`：`GET /`、`POST /`、`POST /presets`（**必须声明在 `:id` 之前**，避免 `presets` 被当作 id）、`PATCH /:id`、`DELETE /:id`，全部 `@ApiBearerAuth()` + `@CurrentUser()`。
 
-- [ ] **Step 3: 运行测试**
+- [x] **Step 3: 运行测试**
 
 Run: `pnpm --filter @hobilog/server test && pnpm --filter @hobilog/server typecheck`
-Expected: PASS。
+Expected: PASS。（实测：14 files / 71 tests 全绿，typecheck + `nest build` 无错误）
 
 - [ ] **Step 4: 提交（需用户授权）**
 
@@ -1515,25 +1557,25 @@ git commit -m "feat(platform): add platform crud and preset platforms"
   - `StoreVo { id, name, platformId, platformName, url, contact, note, createdAt }`
   - `StoreService.assertOwned(userId, storeId): Promise<void>`（供 Order 复用）
 
-- [ ] **Step 1: 写失败的 `store.service.spec.ts`**
+- [x] **Step 1: 写失败的 `store.service.spec.ts`**
 
 ```ts
 import { StoreService } from './store.service'
 
 const prismaMock = () => ({
   store: {
-    findMany: jest.fn().mockResolvedValue([]),
-    count: jest.fn().mockResolvedValue(0),
-    create: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
+    findMany: vi.fn().mockResolvedValue([]),
+    count: vi.fn().mockResolvedValue(0),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
   },
 })
 
 describe('StoreService', () => {
   it('创建店铺时校验平台归属', async () => {
     const prisma = prismaMock()
-    const platformService = { assertOwned: jest.fn().mockResolvedValue(undefined) }
+    const platformService = { assertOwned: vi.fn().mockResolvedValue(undefined) }
     const service = new StoreService(prisma as never, platformService as never)
     prisma.store.create.mockResolvedValue({
       id: 's1', userId: 'u1', platformId: 'pf1', name: 'XXX手办店', url: null, contact: null,
@@ -1546,7 +1588,7 @@ describe('StoreService', () => {
 
   it('不传 platformId 时跳过校验', async () => {
     const prisma = prismaMock()
-    const platformService = { assertOwned: jest.fn() }
+    const platformService = { assertOwned: vi.fn() }
     const service = new StoreService(prisma as never, platformService as never)
     prisma.store.create.mockResolvedValue({
       id: 's2', userId: 'u1', platformId: null, name: '线下店', url: null, contact: null,
@@ -1558,14 +1600,14 @@ describe('StoreService', () => {
 
   it('assertOwned 不存在时抛 404 STORE_NOT_FOUND', async () => {
     const prisma = prismaMock()
-    const service = new StoreService(prisma as never, { assertOwned: jest.fn() } as never)
+    const service = new StoreService(prisma as never, { assertOwned: vi.fn() } as never)
     prisma.store.count.mockResolvedValue(0)
     await expect(service.assertOwned('u1', 's1')).rejects.toMatchObject({ status: 404 })
   })
 })
 ```
 
-- [ ] **Step 2: 实现 DTO / mapper / service / controller / module**
+- [x] **Step 2: 实现 DTO / mapper / service / controller / module**
 
 `dto/create-store.dto.ts`:
 
@@ -1618,9 +1660,10 @@ async assertOwned(userId: string, storeId: string): Promise<void> {
 
 `store.controller.ts` 与 `ProductController` 同形状（含 `platformId` 过滤）。
 
-- [ ] **Step 3: 运行测试并收尾**
+- [x] **Step 3: 运行测试并收尾**
 
 Run: `pnpm --filter @hobilog/server test && pnpm --filter @hobilog/server test:e2e && pnpm --filter @hobilog/server typecheck`
+Expected: PASS。（实测：unit 71 passed + e2e 10 passed；未签令牌访问 `/api/platforms`、`/api/stores`、`POST /api/platforms/presets` 均返回 `{"statusCode":401,"code":"UNAUTHORIZED",...}`）
 
 - [ ] **Step 4: 提交（需用户授权）**
 
@@ -1641,7 +1684,7 @@ git commit -m "feat(store): add store crud with platform ownership validation"
 - Consumes: P2 全部产物 + 真实 Supabase 项目
 - Produces: P2 验收记录（含越权隔离证据）
 
-- [ ] **Step 1: 全量检查**
+- [x] **Step 1: 全量检查**
 
 Run:
 
@@ -1655,7 +1698,7 @@ pnpm db:status
 
 Expected: 全部通过。
 
-- [ ] **Step 2: 用真实 Supabase 用户验证鉴权与隔离**
+- [x] **Step 2: 用真实 Supabase 用户验证鉴权与隔离**
 
 在 Supabase 控制台创建两个测试用户（A、B），用 `curl` 走一遍：
 
@@ -1673,8 +1716,9 @@ curl -s -X POST http://localhost:3000/api/products -H "Authorization: Bearer <to
 ```
 
 Expected: `presets` 返回 `{"created":8}`；商品返回含 `id` 的 VO，`officialPrice` 为 `1299`。
+（实测：改用服务端 `SUPABASE_SECRET_KEY` 走 Admin API 创建 `a@hobilog.dev` / `b@hobilog.dev`，再用密码授权取 token；`created=8`、`officialPrice=1299`、`tagIds` 2 个，全部符合预期。）
 
-- [ ] **Step 3: 验证越权不可见**
+- [x] **Step 3: 验证越权不可见**
 
 拿到 A 的商品 `id` 后，用 B 的 token 请求：
 
@@ -1685,8 +1729,9 @@ curl -s "http://localhost:3000/api/products" -H "Authorization: Bearer <tokenB>"
 ```
 
 Expected: 第一条 `404`；第二条 `{"statusCode":404,"code":"PRODUCT_NOT_FOUND","message":"商品不存在"}`；第三条 `items` 为空数组。
+（实测全部符合；另外补验：B 改 A 商品 404、B 用 A 平台建店 404 `PLATFORM_NOT_FOUND`、B 删 A 店铺 404 `STORE_NOT_FOUND`、B 平台/商品/店铺列表均为空、A 归档后默认列表不含归档商品，20/20 全绿。）
 
-- [ ] **Step 4: 写入验收记录并汇报**
+- [x] **Step 4: 写入验收记录并汇报**
 
 `docs/superpowers/verification/2026-09-18-P2-verification.md` 记录：命令、期望、实际输出摘要、结论。
 
