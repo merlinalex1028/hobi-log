@@ -15,7 +15,15 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
   }
 }>
 
-export function toPaymentLike(payment: OrderWithRelations['payments'][number]): PaymentLike {
+export const ORDER_DOMAIN_INCLUDE = {
+  payments: true,
+  releaseEvents: true,
+  shipments: true,
+} satisfies Prisma.OrderInclude
+
+export type OrderDomainRelations = Prisma.OrderGetPayload<{ include: typeof ORDER_DOMAIN_INCLUDE }>
+
+export function toPaymentLike(payment: OrderDomainRelations['payments'][number]): PaymentLike {
   return {
     id: payment.id,
     type: payment.type,
@@ -30,7 +38,7 @@ export function toPaymentLike(payment: OrderWithRelations['payments'][number]): 
 }
 
 export function toReleaseEventLike(
-  event: OrderWithRelations['releaseEvents'][number],
+  event: OrderDomainRelations['releaseEvents'][number],
 ): ReleaseEventLike {
   return {
     id: event.id,
@@ -42,7 +50,9 @@ export function toReleaseEventLike(
   }
 }
 
-export function toShipmentLike(shipment: OrderWithRelations['shipments'][number]): ShipmentLike {
+export function toShipmentLike(
+  shipment: OrderDomainRelations['shipments'][number],
+): ShipmentLike {
   return {
     id: shipment.id,
     status: shipment.status,
@@ -54,7 +64,7 @@ export function toShipmentLike(shipment: OrderWithRelations['shipments'][number]
   }
 }
 
-export function toOrderDomain(order: OrderWithRelations): OrderDomain {
+export function toOrderDomain(order: OrderDomainRelations): OrderDomain {
   return {
     id: order.id,
     status: order.status,

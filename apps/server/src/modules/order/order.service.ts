@@ -307,14 +307,7 @@ export class OrderService {
     if (!order) return 'ACTIVE'
     if (order.status === 'CANCELLED' || order.status === 'REFUNDED') return order.status
 
-    const domain = toOrderDomain({
-      ...order,
-      items: [],
-      orderEvents: [],
-      attachments: [],
-      platform: null,
-      store: null,
-    } as unknown as OrderWithRelations)
+    const domain = toOrderDomain(order)
     const next: OrderStatus = isOrderCompleted(domain, this.today()) ? 'COMPLETED' : 'ACTIVE'
     if (next !== order.status) {
       await this.prisma.order.update({ where: { id: orderId }, data: { status: next } })

@@ -10,7 +10,6 @@ import {
 import { getNextPayment, type NextPaymentInfo } from '../order/domain/payment-summary'
 import { getDelayMonths, getPlannedReleaseDate } from '../order/domain/release'
 import { toOrderDomain } from '../order/mapper/order-domain.mapper'
-import { ORDER_INCLUDE } from '../order/order.service'
 import type {
   CurrencyAmountVo,
   DashboardVo,
@@ -19,6 +18,14 @@ import type {
   MonthlyPaymentVo,
 } from './mapper/statistics.mapper'
 import { StatisticsRepository, type DimensionField, type DimensionRow } from './statistics.repository'
+
+const STATISTICS_ORDER_INCLUDE = {
+  items: { include: { product: { select: { id: true, name: true } } } },
+  payments: true,
+  releaseEvents: true,
+  shipments: true,
+} satisfies Prisma.OrderInclude
+
 
 const ONE_DAY_MS = 86_400_000
 const FUTURE_PAYMENT_WINDOW_DAYS = 30
@@ -106,7 +113,7 @@ export class StatisticsService {
 
     const activeOrders = await this.prisma.order.findMany({
       where: { userId, archived: false, status: 'ACTIVE' },
-      include: ORDER_INCLUDE,
+      include: STATISTICS_ORDER_INCLUDE,
       orderBy: { updatedAt: 'desc' },
       take: RECENT_ORDER_LIMIT,
     })

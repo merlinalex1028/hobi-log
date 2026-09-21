@@ -1,14 +1,22 @@
 import { Injectable } from '@nestjs/common'
+import type { Prisma } from '../../generated/prisma/client'
 import { toNumber } from '../../common/utils/serialize'
 import { PrismaService } from '../../database/prisma.service'
 import { getDisplayStatus } from '../order/domain/display-status'
 import { toOrderDomain } from '../order/mapper/order-domain.mapper'
-import { ORDER_INCLUDE } from '../order/order.service'
+import type { OrderWithRelations } from '../order/mapper/order-domain.mapper'
 import type { CalendarEventType, CalendarEventVo } from './mapper/calendar.mapper'
 
 const ONE_DAY_MS = 86_400_000
 const CALENDAR_PAYMENT_STATUSES = ['PENDING', 'PAID'] as const
 const CALENDAR_RELEASE_EVENT_TYPES = ['EXPECTED_RELEASE', 'DELAY', 'RELEASED'] as const
+
+const CALENDAR_INCLUDE = {
+  items: { include: { product: { select: { id: true, name: true } } } },
+  payments: true,
+  releaseEvents: true,
+  shipments: true,
+} satisfies Prisma.OrderInclude
 
 const EVENT_PRIORITY: Record<CalendarEventType, number> = {
   PAYMENT_DUE: 0,
@@ -55,7 +63,7 @@ export class CalendarService {
           { shipments: { some: { deliveredAt: { gte: fromDate, lt: toDate } } } },
         ],
       },
-      include: ORDER_INCLUDE,
+      include: CALENDAR_INCLUDE,
     })
 
     const today = new Date().toISOString().slice(0, 10)
