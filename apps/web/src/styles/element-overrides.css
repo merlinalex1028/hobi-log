@@ -1,0 +1,11 @@
+:root {
+  --el-color-primary: #5b6cff;
+  --el-border-radius-base: var(--radius-sm);
+  --el-border-color: var(--border-color);
+}
+
+.el-card,
+.el-drawer,
+.el-dialog {
+  --el-card-border-radius: var(--radius-md);
+}
