@@ -10,10 +10,13 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "dev": "node scripts/dev.mjs",
     "dev:server": "pnpm --filter @hobilog/server start:dev",
     "dev:web": "pnpm --filter @hobilog/web dev",
     "db:migrate": "pnpm --filter @hobilog/server exec prisma migrate dev",
     "db:status": "pnpm --filter @hobilog/server exec prisma migrate status",
-    "db:generate": "pnpm --filter @hobilog/server exec prisma generate"
+    "db:generate": "pnpm --filter @hobilog/server exec prisma generate",
+    "db:local:on": "node scripts/db-local-on.mjs",
+    "db:local:off": "node scripts/db-local-off.mjs"
   }
 }

@@ -17,6 +17,7 @@
 - 迁移：`pnpm --filter @hobilog/server exec prisma migrate dev --name <name>`
 - 迁移状态：`pnpm db:status`
 - 开发服务端：`pnpm dev:server`（会先构建 shared）
+- 同时启动前后端：`pnpm dev`（`scripts/dev.mjs`，日志带 `[server]` / `[web]` 前缀，Ctrl+C 一起停）
 
 ## 工具链（已实测，勿随意升级）
 - Node >= 22.12.0，pnpm 12.4.2（`pnpm-workspace.yaml` 的 `allowBuilds` 放行 prisma / @prisma/engines / @swc/core / @parcel/watcher / unrs-resolver）
