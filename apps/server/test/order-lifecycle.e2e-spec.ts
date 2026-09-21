@@ -11,7 +11,7 @@ import { SupabaseService } from '../src/modules/auth/supabase.service'
 const USER_A = '11111111-1111-4111-8111-111111111111'
 const USER_B = '22222222-2222-4222-8222-222222222222'
 
-vi.setConfig({ testTimeout: 30_000 })
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 })
 
 describe('Order lifecycle (e2e, real postgres)', () => {
   let app: INestApplication
