@@ -5,7 +5,7 @@ vi.mock('@/lib/supabase', () => ({
   supabase: {
     auth: {
       getSession: vi.fn().mockResolvedValue({ data: { session: null } }),
-      onAuthStateChange: vi.fn(),
+      onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
       signInWithPassword: vi
         .fn()
         .mockResolvedValue({ data: { session: { access_token: 'tok' }, user: { id: 'u1' } }, error: null }),
@@ -22,12 +22,38 @@ describe('useAuthStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: null } } as never)
+    vi.mocked(supabase.auth.onAuthStateChange).mockClear()
   })
 
   it('init 后未登录时为 false', async () => {
     const store = useAuthStore()
     await store.init()
     expect(store.isAuthenticated()).toBe(false)
+  })
+
+  it('init 幂等：并发调用只读取一次 session 且只注册一次订阅', async () => {
+    const store = useAuthStore()
+    await Promise.all([store.init(), store.init()])
+    await store.init()
+    expect(vi.mocked(supabase.auth.getSession)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(supabase.auth.onAuthStateChange)).toHaveBeenCalledTimes(1)
+    expect(store.initialized).toBe(true)
+  })
+
+  it('dispose 取消订阅并允许重新 init', async () => {
+    const store = useAuthStore()
+    const unsubscribe = vi.fn()
+    vi.mocked(supabase.auth.onAuthStateChange).mockReturnValueOnce({
+      data: { subscription: { unsubscribe } },
+    } as never)
+
+    await store.init()
+    store.dispose()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(store.initialized).toBe(false)
+
+    await store.init()
+    expect(vi.mocked(supabase.auth.getSession)).toHaveBeenCalledTimes(2)
   })
 
   it('signIn 成功写入 session 与 user', async () => {

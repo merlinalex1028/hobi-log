@@ -14,6 +14,33 @@ export class ApiError extends Error {
   }
 }
 
+let unauthorizedHandler: (() => void | Promise<void>) | null = null
+let handlingUnauthorized = false
+
+export function setUnauthorizedHandler(handler: () => void | Promise<void>): void {
+  unauthorizedHandler = handler
+}
+
+function toApiError(error: AxiosError<ApiErrorBody>): ApiError {
+  const body = error.response?.data
+  if (body && typeof body.code === 'string') return new ApiError(body)
+  return new ApiError({
+    statusCode: error.response?.status ?? 0,
+    code: 'NETWORK_ERROR',
+    message: error.message || '网络异常，请稍后重试',
+  })
+}
+
+async function handleUnauthorized(): Promise<void> {
+  if (!unauthorizedHandler || handlingUnauthorized) return
+  handlingUnauthorized = true
+  try {
+    await unauthorizedHandler()
+  } finally {
+    handlingUnauthorized = false
+  }
+}
+
 export const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   timeout: 15000,
@@ -31,16 +58,8 @@ http.interceptors.request.use(async config => {
 http.interceptors.response.use(
   response => response,
   (error: AxiosError<ApiErrorBody>) => {
-    const body = error.response?.data
-    if (body && typeof body.code === 'string') {
-      return Promise.reject(new ApiError(body))
-    }
-    return Promise.reject(
-      new ApiError({
-        statusCode: error.response?.status ?? 0,
-        code: 'NETWORK_ERROR',
-        message: error.message || '网络异常，请稍后重试',
-      }),
-    )
+    const apiError = toApiError(error)
+    if (apiError.statusCode === 401) void handleUnauthorized()
+    return Promise.reject(apiError)
   },
 )

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { Session, User } from '@supabase/supabase-js'
+import type { Session, Subscription, User } from '@supabase/supabase-js'
 import { ref } from 'vue'
 import { supabase } from '@/lib/supabase'
 
@@ -8,17 +8,33 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const initialized = ref(false)
 
+  let initPromise: Promise<void> | null = null
+  let subscription: Subscription | null = null
+
+  function applySession(next: Session | null): void {
+    session.value = next
+    user.value = next?.user ?? null
+  }
+
   const isAuthenticated = (): boolean => session.value !== null
 
-  async function init(): Promise<void> {
-    const { data } = await supabase.auth.getSession()
-    session.value = data.session
-    user.value = data.session?.user ?? null
-    supabase.auth.onAuthStateChange((_event, next) => {
-      session.value = next
-      user.value = next?.user ?? null
-    })
-    initialized.value = true
+  function init(): Promise<void> {
+    initPromise ??= (async () => {
+      const { data } = await supabase.auth.getSession()
+      applySession(data.session)
+      subscription = supabase.auth.onAuthStateChange((_event, next) => {
+        applySession(next)
+      }).data.subscription
+      initialized.value = true
+    })()
+    return initPromise
+  }
+
+  function dispose(): void {
+    subscription?.unsubscribe()
+    subscription = null
+    initPromise = null
+    initialized.value = false
   }
 
   async function signIn(email: string, password: string): Promise<void> {
@@ -35,13 +51,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function signOut(): Promise<void> {
     await supabase.auth.signOut()
-    session.value = null
-    user.value = null
+    applySession(null)
   }
 
   async function accessToken(): Promise<string | null> {
     return (await supabase.auth.getSession()).data.session?.access_token ?? null
   }
 
-  return { session, user, initialized, isAuthenticated, init, signIn, signUp, signOut, accessToken }
+  return { session, user, initialized, isAuthenticated, init, dispose, signIn, signUp, signOut, accessToken }
 })
