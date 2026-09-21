@@ -63,7 +63,7 @@ const note = computed({
   set: (value: string) => patch({ note: value || undefined }),
 })
 
-function toggleUndetermined(value: boolean): void {
+function toggleUndetermined(value: string | number | boolean): void {
   patch({ amount: value ? null : 0 })
 }
 </script>

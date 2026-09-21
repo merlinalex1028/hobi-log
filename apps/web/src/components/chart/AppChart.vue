@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import type { EChartsOption } from 'echarts'
-import * as echarts from 'echarts'
+import { BarChart, LineChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import * as echarts from 'echarts/core'
+import type { EChartsType } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { EChartsOption } from 'echarts'
+
+echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const props = withDefaults(defineProps<{ option: EChartsOption; height?: string }>(), { height: '280px' })
 
 const container = ref<HTMLDivElement | null>(null)
-let chart: echarts.ECharts | null = null
+let chart: EChartsType | null = null
 let observer: ResizeObserver | null = null
 
 onMounted(() => {

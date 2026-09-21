@@ -8,7 +8,10 @@ const chartMock = vi.hoisted(() => {
   return { instance, init: vi.fn(() => instance) }
 })
 
-vi.mock('echarts', () => ({ init: chartMock.init }))
+vi.mock('echarts/core', () => ({ init: chartMock.init, use: vi.fn() }))
+vi.mock('echarts/charts', () => ({ BarChart: {}, LineChart: {} }))
+vi.mock('echarts/components', () => ({ GridComponent: {}, LegendComponent: {}, TooltipComponent: {} }))
+vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 class ResizeObserverStub {
   observe = vi.fn()

@@ -106,7 +106,7 @@ function close(): void {
       <span class="text-secondary">共 {{ total }} 条</span>
       <el-button :disabled="page <= 1" @click="prevPage">上一页</el-button>
       <el-button :disabled="!hasMore" @click="nextPage">下一页</el-button>
-      <el-button v-if="isError" @click="refetch">重试</el-button>
+      <el-button v-if="isError" @click="() => refetch()">重试</el-button>
     </div>
 
     <template #footer>
