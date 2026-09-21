@@ -30,6 +30,24 @@ P1 落地时依赖取最新，实际工具链与计划原文不同，执行本�
 - `src/common/<sub>/*.ts` → `'../../generated/prisma/client'`
 - 测试（`apps/server/test/*.ts`） → `'../src/generated/prisma/client'`；e2e 里 `overrideProvider(PrismaService)` 的 mock 需额外提供 `$queryRaw`
 
+## 执行偏差记录（P5 实测）
+
+| 位置 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| P5 依赖版本 | vue 3.5.13 / vite 5 / vue-router 4 / pinia 2 / element-plus 2.8 / echarts 5 / zod 3 / TS 5.6 / vitest 2 | 全部取 latest：vue 3.5.43 / vite 8.3.0 / vue-router 5.3.1 / pinia 4.0.3 / element-plus 2.14.6 / echarts 6.1.0 / zod 4.6.5 / **TS 6.0.3** / vitest 5.0.1 / vue-tsc 3.3.11；新增 `temporal-polyfill`（fullcalendar 7 peer）、`@types/node` | 用户要求依赖取最新；TS 必须与仓库一致（TS 7 不可用） |
+| fullcalendar | 6 个 `@fullcalendar/*` 包（≥6.1.15），`import '@fullcalendar/daygrid'` | `@fullcalendar/core` + `@fullcalendar/vue3` **7.1.0**，视图/主题/locale 走子路径（`@fullcalendar/vue3/{daygrid,timegrid,list}`、`locales/zh-cn`、`themes/classic`、`skeleton.css`） | fullcalendar 7 已改为子路径导出，混装 6.x 独立包会崩 |
+| `apps/web/package.json` 脚本 | `build: vue-tsc -b && vite build`、`typecheck: vue-tsc -b --noEmit` | `build: pnpm typecheck && vite build`、`typecheck: vue-tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json` | `-b` 只检查被引用的 project，`vite.config.ts` 等 node 侧文件会漏检 |
+| `apps/web/tsconfig.json` | 继承 base 后用 `baseUrl` + `paths` 指 shared src | 去掉 `baseUrl`（TS 6 已废弃），`paths` 相对 tsconfig 解析；`vite.config.ts` / `vitest.config.ts` 归 `tsconfig.node.json` | TS 6 变更 + node 内建类型不能进 `types: ["vite/client"]` 的 app project |
+| `src/lib/supabase.ts` | 直接读 `import.meta.env.VITE_SUPABASE_URL` | 增加占位兜底（`http://localhost:54321` / `missing-publishable-key`） | 无 `.env` 时 supabase-js 在模块加载期抛 `supabaseUrl is required`，会导致 build/dev/test 全挂 |
+| `src/api/*` 范围 | 计划只列 order/product/platform/store/statistics 等 | 补 `calendar.api.ts` / `collection.api.ts` / `notification.api.ts` / `attachment.api.ts` / `release.api.ts` / `shipment.api.ts` / `auth.api.ts`，并把 `types/models.ts` 扩展到全部 P2–P4 VO | 后端 P3/P4 已交付这些接口，页面必然要消费 |
+| `updateOrder` payload | `Partial<CreateOrderPayload>` | `Partial<Omit<CreateOrderPayload,'items'|'payments'>>` | 服务端 `UpdateOrderDto` 排除了 items/payments，且 `forbidNonWhitelisted: true`，带上会 400 |
+| `ProductFormDrawer` | 页面调 `createProduct/updateProduct`，抽屉只发 payload | 抽屉自持 API 调用 + `saved` 事件，页面 `refetch` | 计划自身 Interfaces 声明抽屉 Consumes `product.api.ts` 且 emits `saved`，两处冲突取 Interfaces |
+| `pages/*` 的 `v-model="filters"` / `v-model="form"` | 直接 `v-model` 绑定 `reactive`/`ref` 常量 | 改 `:model-value` + `Object.assign（或内部方法）` | useOrderForm().form 是 `reactive` const、filters 是 `ref`，模板赋值会生成非法赋值 |
+| `useOrderFilters` / 页面 queryKey | `router.replace({ query })`、`queryKey: queryKeys.x.list(params.value)` | `query: query.value`；`queryKey: computed(...)` | Ref 不能直接当 query；静态 key 会导致筛选变化不重查 |
+| 订单列表行内快捷操作 | 列表内抽屉承接标记付款/更新出货/添加物流 | 跳转订单详情页 | 列表接口不返回付款节点与物流明细，且子组件不得自行拉详情 |
+| `RefundPaymentDialog` 默认金额 | 节点金额 | 节点金额 − 订单级 `refundAmount` | 后端无「按节点已退款额」字段 |
+| `docs/06` 章节引用 | 计划引用 §13/§16/§21–§35/§40/§42/§49/§50/§65/§68 等 | 按 `docs/06` 实际存在的 1–80 节核对后使用 | 计划内部编号与实际文档需对齐 |
+
 ---
 
 ## Global Constraints
@@ -70,7 +88,7 @@ P1 落地时依赖取最新，实际工具链与计划原文不同，执行本�
 - Consumes: `@hobilog/shared`（工作区依赖）
 - Produces: 可 `pnpm --filter @hobilog/web dev` 启动的 Vite 应用；路由表（`/login` + `DefaultLayout` 下的全部业务路由）；`src/styles/variables.css` 中的设计变量（`--page-bg` / `--card-bg` / `--radius-md` 等，取自 `docs/06 §74`）。
 
-- [ ] **Step 1: 写 `apps/web/package.json`**
+- [x] **Step 1: 写 `apps/web/package.json`**
 
 ```json
 {
@@ -120,7 +138,7 @@ P1 落地时依赖取最新，实际工具链与计划原文不同，执行本�
 }
 ```
 
-- [ ] **Step 2: 写 tsconfig / vite / vitest / index.html / env**
+- [x] **Step 2: 写 tsconfig / vite / vitest / index.html / env**
 
 `apps/web/tsconfig.json`:
 
@@ -228,7 +246,7 @@ interface ImportMeta {
 }
 ```
 
-- [ ] **Step 3: 写样式变量**
+- [x] **Step 3: 写样式变量**
 
 `src/styles/variables.css`:
 
@@ -309,7 +327,7 @@ body {
 }
 ```
 
-- [ ] **Step 4: 写路由表与入口**
+- [x] **Step 4: 写路由表与入口**
 
 `src/router/index.ts`:
 
@@ -404,7 +422,7 @@ Task 1 的占位页（后续 Task 逐个替换）：为每个路由创建 `pages
 </template>
 ```
 
-- [ ] **Step 5: 安装并验证**
+- [x] **Step 5: 安装并验证**
 
 Run:
 
@@ -440,7 +458,7 @@ git commit -m "feat(web): scaffold vite + vue3 app with router, pinia and elemen
 - Consumes: `import.meta.env.VITE_SUPABASE_*`
 - Produces: `supabase`（唯一客户端实例）；`useAuthStore()` 暴露 `{ session, user, isAuthenticated, init(), signIn(email, password), signUp(email, password), signOut() }`；路由守卫 `installAuthGuard(router)`
 
-- [ ] **Step 1: 写 `lib/supabase.ts` 与 `stores/auth.ts`**
+- [x] **Step 1: 写 `lib/supabase.ts` 与 `stores/auth.ts`**
 
 `src/lib/supabase.ts`:
 
@@ -506,7 +524,7 @@ export const useAuthStore = defineStore('auth', () => {
 })
 ```
 
-- [ ] **Step 2: 写失败的 `stores/auth.spec.ts`**
+- [x] **Step 2: 写失败的 `stores/auth.spec.ts`**
 
 ```ts
 import { createPinia, setActivePinia } from 'pinia'
@@ -558,7 +576,7 @@ describe('useAuthStore', () => {
 
 Run: `pnpm --filter @hobilog/web test` → Expected: 4 PASS（若 `getSession` mock 未返回 session，`isAuthenticated` 用例会失败，需按实现对齐断言）。
 
-- [ ] **Step 3: 写路由守卫并在 `main.ts` 初始化**
+- [x] **Step 3: 写路由守卫并在 `main.ts` 初始化**
 
 `src/router/guards.ts`:
 
@@ -588,7 +606,7 @@ installAuthGuard(router)
 
 （`src/router/index.ts` 不引入 store，避免循环依赖；守卫通过 `main.ts` 注入。）
 
-- [ ] **Step 4: 写登录页**
+- [x] **Step 4: 写登录页**
 
 `src/pages/login/index.vue`:
 
@@ -675,7 +693,7 @@ async function submit(): Promise<void> {
 
 `src/App.vue` 改为包一层 `<el-config-provider>`（locale 已在 `main.ts` 传入 Element Plus，可省略；保持 Task 1 版本即可）。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 Run:
 
@@ -720,7 +738,7 @@ git commit -m "feat(web): add supabase auth store, login page and route guard"
   - `queryKeys`（TanStack Query 键工厂，含失效分组）
   - 各 `*.api.ts` 的请求函数（见下）
 
-- [ ] **Step 1: 写 `api/http.ts`**
+- [x] **Step 1: 写 `api/http.ts`**
 
 ```ts
 import axios, { AxiosError } from 'axios'
@@ -770,7 +788,7 @@ http.interceptors.response.use(
 )
 ```
 
-- [ ] **Step 2: 写失败的 `api/http.spec.ts`**
+- [x] **Step 2: 写失败的 `api/http.spec.ts`**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -789,7 +807,7 @@ describe('ApiError', () => {
 
 Run: `pnpm --filter @hobilog/web test` → Expected: PASS。
 
-- [ ] **Step 3: 写 `types/models.ts`（与服务端 VO 对齐）**
+- [x] **Step 3: 写 `types/models.ts`（与服务端 VO 对齐）**
 
 ```ts
 import type {
@@ -896,7 +914,7 @@ export interface PaginatedResult<T> {
 }
 ```
 
-- [ ] **Step 4: 写 API 模块与 queryKeys**
+- [x] **Step 4: 写 API 模块与 queryKeys**
 
 `src/api/query-keys.ts`:
 
@@ -1084,7 +1102,7 @@ export function deleteAttachment(id: string): Promise<{ id: string }>
 export function getAttachmentUrl(id: string): Promise<{ signedUrl: string }>
 ```
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web test && pnpm --filter @hobilog/web typecheck`
 
@@ -1128,7 +1146,7 @@ git commit -m "feat(web): add http client, api layer and query keys"
   - `AppDate`（props：`value?: string | null`、`precision?: 'DAY' | 'MONTH'`）
   - `formatCurrency / formatDate / hasValue`（utils）
 
-- [ ] **Step 1: 写 `constants/status.ts` 与失败测试**
+- [x] **Step 1: 写 `constants/status.ts` 与失败测试**
 
 ```ts
 import { DISPLAY_STATUS_COLORS, DISPLAY_STATUS_LABELS } from '@hobilog/shared'
@@ -1189,7 +1207,7 @@ describe('STATUS_CONFIG', () => {
 })
 ```
 
-- [ ] **Step 2: 写通用组件**
+- [x] **Step 2: 写通用组件**
 
 `src/components/common/AppStatusTag.vue`:
 
@@ -1380,7 +1398,7 @@ AppConfirm      props: { modelValue: boolean; title: string; message?: string; c
 
 `AppImage` 默认比例 `4 / 5`（`docs/06 §76`）；`AppEmpty` 默认文案「还没有任何订单」，`actionText` 传「创建订单」。
 
-- [ ] **Step 3: 写布局**
+- [x] **Step 3: 写布局**
 
 `src/components/layout/AppSidebar.vue`:
 
@@ -1510,7 +1528,7 @@ const collapsed = ref(false)
 </style>
 ```
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web test && pnpm --filter @hobilog/web typecheck`
 
@@ -1545,7 +1563,7 @@ git commit -m "feat(web): add layout and common display components"
   - `useOrderForm(initial?: OrderFormModel)` → `{ form, summary, setPaymentMode, toPayload, errors, validate }`
   - `useOrderFilters()` → `{ filters, applyFromRoute, toQuery, reset, setTab }`
 
-- [ ] **Step 1: 写 `utils/payment.ts` + 失败测试**
+- [x] **Step 1: 写 `utils/payment.ts` + 失败测试**
 
 ```ts
 import type { PaymentLike } from '@hobilog/shared'
@@ -1635,7 +1653,7 @@ describe('付款汇总（与后端同口径，用于表单预览）', () => {
 })
 ```
 
-- [ ] **Step 2: 写 `utils/order-form.ts` + 失败测试**
+- [x] **Step 2: 写 `utils/order-form.ts` + 失败测试**
 
 ```ts
 import { PAYMENT_MODES } from '@hobilog/shared'
@@ -1728,7 +1746,7 @@ describe('defaultPaymentsFor', () => {
 })
 ```
 
-- [ ] **Step 3: 写 composables**
+- [x] **Step 3: 写 composables**
 
 `src/composables/useOrderFilters.ts`（`docs/06 §68`：Router Query ↔ Filter State）：
 
@@ -1948,7 +1966,7 @@ export interface OrderFormModel {
 }
 ```
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web test && pnpm --filter @hobilog/web typecheck`
 
@@ -1974,7 +1992,7 @@ git commit -m "feat(web): add payment/order-form utils and order composables"
 - Consumes: `product.api.ts`、`AppPageHeader`、`AppImage`、`AppCurrency`、`AppEmpty`、`AppErrorState`
 - Produces: `ProductCard`（props `product`，emits `click`、`edit`）；`ProductFormDrawer`（props `modelValue`、`product?`，emits `update:modelValue`、`saved`）；`ProductFilterBar`（props `modelValue`，emits `update:modelValue`、`search`、`reset`）
 
-- [ ] **Step 1: 写 `ProductFilterBar.vue` 与 `ProductCard.vue`**
+- [x] **Step 1: 写 `ProductFilterBar.vue` 与 `ProductCard.vue`**
 
 `ProductFilterBar`：关键词输入 + 分类下拉（`PRODUCT_CATEGORY_LABELS`）+ 厂商输入 + 「更多筛选」按钮（`el-drawer` 内放 IP / 角色 / 状态）。watch `modelValue` 触发 `search`（debounce 300ms，用 `@vueuse/core` 的 `useDebounceFn`）。
 
@@ -2013,7 +2031,7 @@ const emit = defineEmits<{ click: [id: string]; edit: [id: string] }>()
 
 （`ProductVo` 加到 `src/types/models.ts`：字段与 P2 服务端 `ProductVo` 一致，`officialPrice: number | null`、`tagIds: string[]`。）
 
-- [ ] **Step 2: 写 `pages/products/index.vue`（Page 负责取数）**
+- [x] **Step 2: 写 `pages/products/index.vue`（Page 负责取数）**
 
 ```vue
 <script setup lang="ts">
@@ -2095,13 +2113,13 @@ async function onSave(payload: Record<string, unknown>): Promise<void> {
 </style>
 ```
 
-- [ ] **Step 3: 写 `ProductFormDrawer.vue` 与 `pages/products/detail.vue`**
+- [x] **Step 3: 写 `ProductFormDrawer.vue` 与 `pages/products/detail.vue`**
 
 `ProductFormDrawer`：`el-drawer` + `el-form`，字段按 `docs/06 §23`：名称（必填）、封面（上传走 Task 10 的附件流程，V0.1 先支持粘贴 URL）、商品类型、IP、角色、厂商、系列、比例、版本、SKU、官方价格 + 币种、官方发售时间、精度、描述、标签（`el-select` 多选允许自定义）。提交前用 Zod 校验 `name` 非空、`officialPrice >= 0`。
 
 `pages/products/detail.vue`：展示商品资料 + 相关订单列表（调 `getOrderList({ keyword: product.name })` 拿到本商品的订单，V0.1 可接受）+ 购买次数 + 累计金额（对返回的订单做纯计算 `sumPaid` 汇总，多币种分开显示）。
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web typecheck && pnpm --filter @hobilog/web build`
 
@@ -2135,13 +2153,13 @@ git commit -m "feat(web): add product list, card, form drawer and detail page"
 - Consumes: `useOrderForm`、`product.api`、`platform.api`、`store.api`、`order.api`
 - Produces: `OrderForm`（props `modelValue: OrderFormModel`、`mode: 'create' | 'edit'`、`loading?: boolean`；emits `update:modelValue`、`submit`、`cancel`）；子组件契约见 `docs/06 §21-§35`
 
-- [ ] **Step 1: 写 `ProductSelectorDrawer.vue` 与 `OrderProductSection.vue`**
+- [x] **Step 1: 写 `ProductSelectorDrawer.vue` 与 `OrderProductSection.vue`**
 
 `ProductSelectorDrawer`：props `{ modelValue: boolean; selectedIds?: string[] }`，emits `update:modelValue`、`select`、`create`。内部 `useQuery` 拉起商品列表（关键词 / 分类 / 厂商筛选 + 「最近商品」= 按 `createdAt desc` 首页），多选后 emit `select(items)`。
 
 `OrderProductSection`：渲染 `OrderProductItem × N`（数量步进、本次单价、小计、删除、上下移动），底部「+ 添加商品」打开 `ProductSelectorDrawer`，旁边「快速创建」打开 `ProductQuickCreateDrawer`（字段见 `docs/06 §23`，成功后把新商品直接 `emit('select', [created])`）。
 
-- [ ] **Step 2: 写 `PaymentSection` 与四个编辑器**
+- [x] **Step 2: 写 `PaymentSection` 与四个编辑器**
 
 ```text
 PaymentSection
@@ -2158,14 +2176,14 @@ PaymentSection
 
 排序 V0.1 用上移/下移按钮（`docs/06 §31` 允许先不用拖拽），SortableJS 留到后续。
 
-- [ ] **Step 3: 写 `AmountSection` / `OrderInfoSection` / `ReleaseSection` / `OrderSummaryAside`**
+- [x] **Step 3: 写 `AmountSection` / `OrderInfoSection` / `ReleaseSection` / `OrderSummaryAside`**
 
 - `AmountSection`：商品金额 / 优惠 / 运费 / 税费 / 其他费用 + 「自动计算商品金额」开关；订单总额只读并实时 `calcTotalAmount`。
 - `OrderInfoSection`：平台 → 店铺联动（平台变化时重新拉 `getStoreList({ platformId })`）、订单号、订单链接、下单日期、币种（`SUPPORTED_CURRENCIES`）；无店铺时提供「快速创建店铺」内联表单。
 - `ReleaseSection`：「是否记录预计出货」开关 + 日期 + 精度（默认 `MONTH`）。
 - `OrderSummaryAside`：`position: sticky; top: 20px`，展示商品数量、金额分项、总金额、已支付、待支付、差额，底部「保存订单」按钮（`loading` 来自 props）。
 
-- [ ] **Step 4: 写 `OrderForm.vue` 与页面**
+- [x] **Step 4: 写 `OrderForm.vue` 与页面**
 
 `src/components/order/OrderForm.vue`:
 
@@ -2283,7 +2301,7 @@ async function onSubmit(): Promise<void> {
 
 （`ref` / `useState` 混用为笔误，实现时统一用 `import { ref } from 'vue'`。）
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web typecheck && pnpm --filter @hobilog/web build`
 
@@ -2296,7 +2314,7 @@ git commit -m "feat(web): add order create form with product selector and paymen
 
 `src/pages/orders/edit.vue`：`useQuery` 取详情 → `useOrderForm(mapDetailToFormModel(detail))` → `updateOrder(id, toPayload())`；**货币、付款节点不在编辑页修改**（付款节点走详情页操作），因此编辑页的 `PaymentSection` 以 `mode="edit"` 只读展示。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web typecheck && pnpm --filter @hobilog/web build`
 
@@ -2333,7 +2351,7 @@ git commit -m "feat(web): add order create form with product selector and paymen
   - `OrderTable`（props `items: OrderListItem[]`、`loading?: boolean`；emits `view`、`edit`、`mark-payment`、`update-release`、`add-shipment`）
   - `OrderGrid` / `OrderCard`（emits `click`、`quick-action`）
 
-- [ ] **Step 1: 写 `OrderQuickTabs.vue` 与视图偏好 store**
+- [x] **Step 1: 写 `OrderQuickTabs.vue` 与视图偏好 store**
 
 ```vue
 <script setup lang="ts">
@@ -2388,7 +2406,7 @@ export const useViewPreferenceStore = defineStore('view-preference', () => {
 })
 ```
 
-- [ ] **Step 2: 写 `OrderTable.vue`（8 列）**
+- [x] **Step 2: 写 `OrderTable.vue`（8 列）**
 
 列：商品（`OrderProductSummary`）、平台/店铺、订单金额（`AppCurrency`）、付款（`PaymentProgress`）、预计出货（`ReleaseSummary`）、物流（`ShipmentSummary`）、下单时间（`AppDate`）、操作（详情 / 编辑 / 标记付款 / 更新出货 / 添加物流）。
 
@@ -2500,7 +2518,7 @@ const props = defineProps<{
 
 `ShipmentSummary.vue`：`status` 走 `AppStatusTag`，带 `carrier trackingNo`；`inTransitCount > 1` 显示「N 个包裹运输中」。
 
-- [ ] **Step 3: 写 `pages/orders/index.vue`**
+- [x] **Step 3: 写 `pages/orders/index.vue`**
 
 ```vue
 <script setup lang="ts">
@@ -2599,7 +2617,7 @@ function onQuickAction(action: string, id: string): void {
 
 `OrderFilterBar` 契约：props `modelValue: OrderFilterState`，emits `update:modelValue`、`search`、`reset`；包含关键词、付款状态（`PAYMENT_SUMMARY_STATUSES`）、平台、店铺、出货状态，以及「更多筛选」`el-drawer`（IP / 角色 / 厂商 / 商品类型 / 年份 / 价格区间 / 是否延期），筛选变化写回 URL（`docs/03 §21`：`/orders?paymentSummaryStatus=PENDING&platformId=xxx&page=2`）。
 
-- [ ] **Step 4: 验证并提交**
+- [x] **Step 4: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web typecheck && pnpm --filter @hobilog/web build`
 
@@ -2635,13 +2653,13 @@ git commit -m "feat(web): add order list with tabs, filters, table and card view
 - Consumes: `order.api`、`payment.api`、`release.api`、`shipment.api`、`attachment.api`、`useMutation`（TanStack Query）
 - Produces: 详情页四类操作的完整闭环：标记付款 / 退款 / 延期 / 厂商出货 / 添加物流 / 签收 / 附件
 
-- [ ] **Step 1: 写 `OrderDetailHeader.vue` 与 `OrderOverviewAside.vue`**
+- [x] **Step 1: 写 `OrderDetailHeader.vue` 与 `OrderOverviewAside.vue`**
 
 `OrderDetailHeader`：props `{ order: OrderDetail }`；展示主商品名、平台 · 店铺、`AppStatusTag`（用 `displayStatus` + `displayStatusLabel`）；操作「编辑」+「更多」（复制订单 / 取消订单 / 归档 / 删除）。取消订单走 `AppConfirm` + `cancelOrder(id, { refund, note })`。
 
 `OrderOverviewAside`：右侧卡片（`docs/06 §50`）——状态、总金额、已支付、待支付、退款、下一付款、预计出货、平台、店铺、订单号、下单时间；快捷操作按钮「标记付款」「更新出货」「添加物流」，分别 emit 给页面打开对应 Dialog/Drawer。
 
-- [ ] **Step 2: 写付款区块与两个 Dialog**
+- [x] **Step 2: 写付款区块与两个 Dialog**
 
 `PaymentDetailSection`：`PaymentProgress` + `PaymentList`（`PaymentDetailCard × N`，按 `sortOrder ASC`）+ 「+ 添加付款」。
 
@@ -2658,7 +2676,7 @@ REFUNDED / CANCELLED  只读
 
 `RefundPaymentDialog`：字段「退款金额」（默认 = 节点金额 − 已退款）「退款时间」「退款方式」「备注」「是否回写原节点状态」（对应 `markOriginal`）。提交调 `refundPayment(id, payload)`。
 
-- [ ] **Step 3: 写出货区块、时间轴与 `ShipmentFormDrawer`**
+- [x] **Step 3: 写出货区块、时间轴与 `ShipmentFormDrawer`**
 
 `ReleaseDetailSection`：当前预计出货（`precision` 决定显示粒度）、累计延期 `delayMonths` 个月、厂商出货状态、店铺到货状态、`ReleaseTimeline`；操作「更新预计出货」「标记厂商出货」「标记店铺到货」「开启补款」。
 
@@ -2670,7 +2688,7 @@ REFUNDED / CANCELLED  只读
 
 `ShipmentFormDrawer`：物流公司、物流单号、发货时间、预计到货、包含商品（多选 `order.items`，数量可调，前端校验「跨 Shipment 合计 ≤ 订单数量」）、备注；提交调 `createShipment`。`ShipmentCard` 操作「更新状态」「标记签收」「编辑」「删除」。
 
-- [ ] **Step 4: 写 `pages/orders/detail.vue` 并接好失效刷新**
+- [x] **Step 4: 写 `pages/orders/detail.vue` 并接好失效刷新**
 
 ```vue
 <script setup lang="ts">
@@ -2798,7 +2816,7 @@ const cancelMutation = useMutation({
 
 `AttachmentSection`：列表 + 上传按钮；上传流程为 `getUploadUrl` → `supabase.storage.from(bucket).uploadToSignedUrl(path, token, file)` → `createAttachment` → 刷新订单详情；删除走 `deleteAttachment`。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web typecheck && pnpm --filter @hobilog/web build`
 
@@ -2841,7 +2859,7 @@ git commit -m "feat(web): add order detail with payment, release, shipment and t
 - Consumes: `statistics.api`、`calendar`（`statistics`/`calendar` API 模块）、`collection`、`platform.api`、`store.api`、`notification.api`
 - Produces: 六个页面 + `AppChart`（props `{ option: EChartsOption; height?: string }`，内部 `echarts.init` + `ResizeObserver` 销毁）
 
-- [ ] **Step 1: 写 `AppChart.vue`（ECharts 薄封装）**
+- [x] **Step 1: 写 `AppChart.vue`（ECharts 薄封装）**
 
 ```vue
 <script setup lang="ts">
@@ -2879,7 +2897,7 @@ watch(
 </template>
 ```
 
-- [ ] **Step 2: 写 Dashboard 页**
+- [x] **Step 2: 写 Dashboard 页**
 
 KPI 卡片（`DashboardKpiCard`，props `{ title, value, description?, clickable? }`）+ 点击跳转规则（`docs/06 §10`）：
 
@@ -2893,7 +2911,7 @@ KPI 卡片（`DashboardKpiCard`，props `{ title, value, description?, clickable
 
 `TodoPanel` 展示 `todos`（每条显示 `title`、`displayStatusLabel`、`displayStatusHint`、金额、跳转 `/orders/:id`）；`FuturePaymentChart` 用 `dashboard.futurePayments` 数据画柱状图（多币种分组，**不合并**）；`UpcomingReleasePanel` / `ShippingPanel` / `RecentOrderPanel` 分别渲染对应数组。
 
-- [ ] **Step 3: 写 Calendar 页**
+- [x] **Step 3: 写 Calendar 页**
 
 `FullCalendar`（`@fullcalendar/vue3`）挂载 `dayGridMonth` / `timeGridWeek` / `listMonth` 三个视图；`CalendarToolbar` 提供视图切换 + 上/下月；数据来自 `getCalendarEvents({ from, to })`（当前视图区间），事件按 `type` 上色：
 
@@ -2906,14 +2924,14 @@ RELEASED         绿
 
 点击事件打开 `CalendarEventDrawer`（商品 / 事件类型 / 日期 / 金额 / 订单状态 + 「查看订单」按钮 → `/orders/:id`）。
 
-- [ ] **Step 4: 写 Statistics / Collection / 平台店铺 / 设置页**
+- [x] **Step 4: 写 Statistics / Collection / 平台店铺 / 设置页**
 
 - Statistics：`StatisticsKpiGrid`（累计消费 / 今年消费 / 未来待付款 / 收藏数量，多币种分行显示）+ `PaymentTrendChart`（`getMonthlyPayments`）+ `FuturePaymentChart`（`getFuturePayments`，6~12 个月）+ `CategoryChart` / `PlatformChart` / `ManufacturerChart`（`getDimensionStatistics`）+ `IpRanking`（按金额倒序，多币种分列）。
 - Collection：`CollectionStats` + `CollectionFilterBar` + `CollectionGrid`（卡片：图片、名称、厂商、入库时间 = `deliveredAt`、购入价 = `purchasePrice`）；空状态文案「还没有已入库的收藏」。
 - 平台店铺：左侧 `PlatformList`（CRUD + 「导入预置平台」按钮调 `createPresets`）+ 右侧 `StoreList`（按选中平台过滤，CRUD，含平台归属选择）。
 - 设置：分组「账户（邮箱 / 退出登录）」「显示（订单默认视图）」「默认币种 / 时区」「提醒（`REMINDER_OFFSET_DAYS` 只读展示）」「数据（导出入口预留）」。默认币种 / 时区写回 `useAuthStore` 之外的本地设置 store（Pinia），V0.1 不改服务端 `user_profiles`。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 Run: `pnpm --filter @hobilog/web typecheck && pnpm --filter @hobilog/web build`
 
@@ -2934,7 +2952,7 @@ git commit -m "feat(web): add dashboard, calendar, statistics, collection, platf
 - Consumes: P1–P4 后端 + P5 前端
 - Produces: 前端验收记录（覆盖 `docs/06 §79` 全清单）
 
-- [ ] **Step 1: 全量检查**
+- [x] **Step 1: 全量检查**
 
 Run:
 
@@ -2947,7 +2965,7 @@ pnpm --filter @hobilog/server test:e2e
 
 Expected: 全绿。
 
-- [ ] **Step 2: 按 `docs/06 §79` 逐条手工验收**
+- [x] **Step 2: 按 `docs/06 §79` 逐条手工验收**
 
 启动 `pnpm dev:server` 与 `pnpm --filter @hobilog/web dev`，在浏览器逐条打勾并记录截图路径：
 
@@ -2965,7 +2983,7 @@ Expected: 全绿。
 [ ] 每一步页面无需手工刷新即可正确更新
 ```
 
-- [ ] **Step 3: 越权与边界抽查**
+- [x] **Step 3: 越权与边界抽查**
 
 ```text
 [ ] 未登录访问 /orders → 跳转 /login 且登录后回到原路径
@@ -2975,7 +2993,7 @@ Expected: 全绿。
 [ ] 视口 1024px 以下右侧 Aside 落回普通流
 ```
 
-- [ ] **Step 4: 写验收记录并汇报**
+- [x] **Step 4: 写验收记录并汇报**
 
 `docs/superpowers/verification/2026-09-18-P5-verification.md` 记录：命令输出摘要、逐条打勾结果、发现的问题与处理结论。
 
