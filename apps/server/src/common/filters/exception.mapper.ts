@@ -12,6 +12,12 @@ const PRISMA_CODE_MAP: Record<string, ErrorBody> = {
   P1002: { statusCode: 503, code: 'DATABASE_UNAVAILABLE', message: '数据库连接不可用' },
 }
 
+const DATABASE_ERROR_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'])
+const DATABASE_ERROR_MESSAGES = [
+  'Connection terminated unexpectedly',
+  'timeout exceeded when trying to connect',
+]
+
 function toErrorBody(statusCode: number, code: string, message: string): ErrorBody {
   return { statusCode, code, message }
 }
@@ -34,6 +40,16 @@ export function mapException(exception: unknown): ErrorBody {
       HttpStatus[exception.getStatus()] ?? 'ERROR',
       typeof payload === 'string' ? payload : exception.message,
     )
+  }
+
+  if (exception instanceof Error) {
+    const code = 'code' in exception ? exception.code : undefined
+    if (
+      (typeof code === 'string' && DATABASE_ERROR_CODES.has(code)) ||
+      DATABASE_ERROR_MESSAGES.some(message => exception.message.includes(message))
+    ) {
+      return toErrorBody(503, 'DATABASE_UNAVAILABLE', '数据库连接不可用')
+    }
   }
 
   return toErrorBody(500, 'INTERNAL_ERROR', '服务器内部错误')

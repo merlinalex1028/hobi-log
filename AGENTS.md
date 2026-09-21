@@ -47,6 +47,6 @@
 - 新增接口或改接口后，先跑 `pnpm -r typecheck` 与 `pnpm -r test`，再更新 `docs/05` 对应条目。
 
 ## 环境变量（`apps/server/.env`）
-- `DATABASE_URL` / `DIRECT_URL`：Supabase PostgreSQL。**本机直连域名不可达（IPv6-only），两者都用 Session pooler 串**（`aws-0-<region>.pooler.supabase.com:5432`）。
+- `DATABASE_URL` / `DIRECT_URL`：Supabase PostgreSQL。**本机直连域名不可达（IPv6-only）**。运行期 `DATABASE_URL` 用 Transaction pooler（`aws-0-<region>.pooler.supabase.com:6543`）；Prisma CLI 的 `DIRECT_URL` 用 Session pooler（同域名的 `5432`）。
 - `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY`：Supabase 新版 key 体系（P2 起必填）。
 - `SUPABASE_SECRET_KEY` 只允许出现在 `apps/server`，禁止进入任何 `VITE_` 变量。

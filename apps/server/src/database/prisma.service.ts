@@ -12,6 +12,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         max: 5,
         idleTimeoutMillis: 10_000,
         connectionTimeoutMillis: 15_000,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 30_000,
+        // Supavisor may retire idle sockets; rotate clients before stale connections linger.
+        maxLifetimeSeconds: 300,
       }),
     })
   }

@@ -143,6 +143,16 @@ http.interceptors.request.use(async config => {
 }
 ```
 
+Prisma 及底层 `pg` 连接中断、连接超时统一返回 HTTP 503：
+
+```json
+{
+  "statusCode": 503,
+  "code": "DATABASE_UNAVAILABLE",
+  "message": "数据库连接不可用"
+}
+```
+
 ## 8. Order API
 
 ```ts

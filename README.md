@@ -25,7 +25,7 @@ cp apps/server/.env.example apps/server/.env   # 填 DATABASE_URL / DIRECT_URL /
 cp apps/web/.env.example apps/web/.env         # 填 VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY
 ```
 
-- `apps/server/.env` 需要 `DATABASE_URL` / `DIRECT_URL`（Supabase Session pooler 串）、`SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY`。
+- `apps/server/.env` 需要 `DATABASE_URL`（Supabase Transaction pooler，6543）/ `DIRECT_URL`（Session pooler，5432）、`SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY`。
 - `apps/web/.env` 只允许 `VITE_API_BASE_URL` / `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`，**禁止任何 secret**。
 - 建表：`pnpm db:migrate`（或对已有库跑 `pnpm --filter @hobilog/server exec prisma migrate deploy`）。
 

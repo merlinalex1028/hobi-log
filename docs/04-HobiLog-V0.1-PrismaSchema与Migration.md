@@ -32,7 +32,7 @@ DATABASE_URL="postgresql://..."
 DIRECT_URL="postgresql://..."
 ```
 
-`DATABASE_URL` 用于应用运行，`DIRECT_URL` 用于 migration 等直连场景。
+`DATABASE_URL` 用于应用运行（Supabase Transaction pooler，6543），`DIRECT_URL` 用于 migration 等 CLI 场景（Session pooler，5432）。
 
 ## 3. schema.prisma 基础
 

@@ -80,4 +80,17 @@ describe('mapException', () => {
       message: '服务器内部错误',
     })
   })
+
+  it.each([
+    new Error('Connection terminated unexpectedly'),
+    new Error('timeout exceeded when trying to connect'),
+    Object.assign(new Error('read failed'), { code: 'ECONNRESET' }),
+    Object.assign(new Error('connect failed'), { code: 'ETIMEDOUT' }),
+  ])('pg 连接异常 → 503 DATABASE_UNAVAILABLE', error => {
+    expect(mapException(error)).toEqual({
+      statusCode: 503,
+      code: 'DATABASE_UNAVAILABLE',
+      message: '数据库连接不可用',
+    })
+  })
 })
