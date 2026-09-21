@@ -33,12 +33,24 @@ describe('mapException', () => {
 
   it('未知 Prisma 错误 → 400', () => {
     const error = new Prisma.PrismaClientKnownRequestError('weird', {
-      code: 'P1001',
+      code: 'P9999',
       clientVersion: '7.10.0',
     })
     expect(mapException(error).statusCode).toBe(400)
-    expect(mapException(error).code).toBe('PRISMA_P1001')
+    expect(mapException(error).code).toBe('PRISMA_P9999')
   })
+
+  it.each(['P2028', 'P2024', 'P1001', 'P1002'])(
+    '%s（事务/连接类失败）→ 503 DATABASE_UNAVAILABLE',
+    code => {
+      const error = new Prisma.PrismaClientKnownRequestError('database busy', {
+        code,
+        clientVersion: '7.10.0',
+      })
+      expect(mapException(error).statusCode).toBe(503)
+      expect(mapException(error).code).toBe('DATABASE_UNAVAILABLE')
+    },
+  )
 
   it('带 code 的 HttpException 原样保留', () => {
     const error = new BadRequestException({

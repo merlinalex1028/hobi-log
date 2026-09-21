@@ -6,6 +6,10 @@ const PRISMA_CODE_MAP: Record<string, ErrorBody> = {
   P2002: { statusCode: 409, code: 'CONFLICT', message: '数据已存在' },
   P2025: { statusCode: 404, code: 'NOT_FOUND', message: '记录不存在' },
   P2003: { statusCode: 400, code: 'FOREIGN_KEY_VIOLATION', message: '关联数据不合法' },
+  P2028: { statusCode: 503, code: 'DATABASE_UNAVAILABLE', message: '数据库繁忙，请稍后重试' },
+  P2024: { statusCode: 503, code: 'DATABASE_UNAVAILABLE', message: '数据库繁忙，请稍后重试' },
+  P1001: { statusCode: 503, code: 'DATABASE_UNAVAILABLE', message: '数据库连接不可用' },
+  P1002: { statusCode: 503, code: 'DATABASE_UNAVAILABLE', message: '数据库连接不可用' },
 }
 
 function toErrorBody(statusCode: number, code: string, message: string): ErrorBody {
