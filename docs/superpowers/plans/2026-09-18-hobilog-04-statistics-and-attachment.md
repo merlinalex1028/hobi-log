@@ -37,6 +37,38 @@ P1 落地时依赖取最新，实际工具链与计划原文不同，执行本�
 | 错误码断言 | `toMatchObject({ code: 'XXX' })` | `toMatchObject({ response: { code: 'XXX' } })` | `BusinessException` 继承 `HttpException`，`code` 在 `getResponse()` 返回体里，不是异常顶层自有属性（P2 实测踩过，本计划已修正） |
 | 模块结构 | 单文件内联 VO | 每模块 `mapper/<name>.mapper.ts` + `.spec.ts` | 与 P2 的 product / platform / store 保持一致 |
 
+## 执行偏差记录（P4 实测）
+
+| 位置 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| VO 文件位置 | `statistics/vo/statistics.vo.ts` | `statistics/mapper/statistics.mapper.ts` | 与既有模块结构一致 |
+| Prisma 导入 | `from '@prisma/client'` | `from '../../generated/prisma/client'`，且 `Prisma` 必须值导入 | Prisma 7 生成目录约定；`Prisma.sql` / `Prisma.empty` 是运行期值，`import type` 会报 TS1361 |
+| 原生 SQL 列名 | snake_case（`o.total_amount`、`p.ip_name`、`pay.paid_at`…） | 引号 camelCase（`o."totalAmount"`、`p."ipName"`、`pay."paidAt"`…） | migration 里列名就是 camelCase（`"ipName"`），按原文会报列不存在 |
+| 维度统计 `itemCount` | payments ⋈ order_items 后直接 `SUM(quantity)` | 先用 CTE 按订单聚合并款，再 join items | 原写法会把 itemCount 乘以每单付款笔数（真库实测 2 笔付款 → itemCount 翻倍） |
+| 收藏库计数 | `topCollections(userId, limit)`（`COUNT(*)` + `status='COMPLETED'` + `LIMIT`） | `countCollectionItems(userId)`（`COUNT(DISTINCT oi.id)` + `archived=false` + `EXISTS(DELIVERED shipment)`，去掉 `LIMIT`） | 聚合上加 `LIMIT` 无意义且 `limit` 是死参；硬性约束要求排除 `archived`；要避免 join shipments 重复计数；与 Task 2 `CollectionService.list` 口径对齐 |
+| 待办优先级 | `overdueDays > 1 ? 0 : 0`（两分支同值） | 按 `dueAt` 距今天数分档：逾期 0 / ≤1 天 1 / ≤3 天 2 / ≤7 天 3 / 其余 4 | 原文是常量、注释要求把 `dueAt` 距离纳入排序（docs/02 §18），已补单测 |
+| Dashboard `futurePayments` | 把全部 PENDING 付款塞进当前月 | select 增加 `dueAt`，按月份分桶、只取未来 12 个月 | 原写法等于 `kpis.pendingPaymentAmount` 副本，与 docs/02 §18「未来付款柱状图」不符 |
+| `upcomingReleases` | 仅按日期窗口过滤 | 追加 `precision ∈ {MONTH, DAY}` | docs/07 §62「本月出货」要求精度为 MONTH / DAY |
+| 月度 `orderAmount` | `SUM(CASE WHEN type<>'REFUND' THEN amount)`（付款之和，含 PENDING） | 单独查 `SUM(o."totalAmount")` 按 `orderedAt` 月份，再与现金流按月+币种合并 | docs/07 §74 与硬性约束：订单规模必须用 `Order.totalAmount` |
+| Dashboard 查询并发 | 单个 `Promise.all` 内 13 路并发（`ORDER_INCLUDE` 8 个关系 + 5 条聚合） | 5 条聚合留在 `Promise.all`，`order.findMany`（8 关系）串行；并把 `PrismaService` 的连接池设为 `max: 5` | 真库实测 `XX000 (EMAXCONNSESSION) max clients reached in session mode … pool_size: 15`，Supabase session pooler 有并发上限 |
+| 映射工具 | `Number(row.amount ?? 0)`、`row.dueAt as Date` | `toNumber(row.amount) ?? 0`、`if (!row.dueAt) continue` | 复用仓库既有序列化工具、去掉不安全断言 |
+
+### 后续 Task 实测补记
+
+| 位置 | 计划原文 | 实际采用 | 原因 |
+| --- | --- | --- | --- |
+| Calendar / Collection 的 VO | 内联在 service | `calendar/mapper/calendar.mapper.ts`、`collection/mapper/collection.mapper.ts` | 与既有模块结构一致（Task 2） |
+| 收藏口径 | dashboard 用 `COUNT(DISTINCT order_items.id)`、`/collection/stats` 用 `SUM(quantity)`，且都只过滤 `archived=false` | 两者统一为 **件数**（`SUM(oi.quantity)`），并追加 `Order.status <> 'CANCELLED'` | docs/07 §64 要求按 quantity 求和、docs/02 §28 要求「未取消」；否则 Dashboard 与收藏库数字不一致（Task 5 实测发现） |
+| Attachment DTO 的 bucket / mimeType | `bucket!: string` / `mimeType!: string`，枚举内联硬编码 | `as const` 常量 + 联合类型 `StorageBucket` / `AllowedMimeType` / `AttachmentTargetType`，`@IsIn` 复用同一来源 | 约定：枚举字段用联合类型（Task 3） |
+| `GET /attachments/:id/url?expiresIn=` | controller 忽略 `expiresIn`（硬编码 3600） | 新增 `dto/download-url-query.dto.ts`（默认 3600、`@Min(60)`、`@Max(604800)`）并透传 | 与 Interfaces 声明一致（Task 3） |
+| Storage 路径拼接 | `dto.bucket === 'attachments' ? 'attachments/…' : 'product-images/…'`、`bucket as string` | 统一 `` `${dto.bucket}/${dto.storagePath}` ``，并用 `splitStoragePath()` 校验 bucket ∈ 白名单（非法时下载抛 502 `STORAGE_UNAVAILABLE`、删除跳过 Storage） | 去掉不安全断言并可失败可见（Task 3） |
+| Attachment spec 的 Supabase mock | `{ admin: { storage } }`（与 service 的 `admin.storage.from()` 层级不匹配） | `{ admin: { storage: { from } } }` | 计划原文首跑即 `TypeError: reading 'from'`（Task 3） |
+| Notification 的 `ReminderVo` | 内联在 service | `notification/mapper/notification.mapper.ts` + `ReminderKind` 联合类型 | 模块结构一致（Task 4） |
+| 待办优先级表 | 嵌套三元 | `PRIORITY` 常量表 + `dueSoonPriority()`（数值与原意一致） | 可读性（Task 4） |
+| e2e 运行环境（Task 5） | 沿用 P3 的「真库 e2e」写法（打远端 Supabase） | `test/setup-env.ts` 强制 `DATABASE_URL`/`DIRECT_URL` 指向**本地测试库**（默认 `localhost:5433/hobilog_test`，可用 `TEST_DATABASE_URL` 覆盖） | 远端 session pooler 有并发上限且泄漏会话会被占满，加上开发机 VPN 抖动，e2e 频繁 `Connection terminated unexpectedly`（详见 P4 验收记录 §2）；换本地库后 32 个 e2e 约 1s 全绿 |
+| `PrismaService` 连接池 | `max: 5`（Task 1 为绕开 `EMAXCONNSESSION` 加的） | 追加 `idleTimeoutMillis: 10_000`、`connectionTimeoutMillis: 15_000` | 空闲连接及时释放、失败快速暴露而非挂 60–80s |
+| Dashboard KPI 形状 | 计划断言 `kpis.pendingPaymentAmount` 是标量 | 实际是**按币种数组** `[{currency,amount}]`（多币种不合并的正确形态） | e2e 断言改为按 CNY 条目取值（Task 5） |
+
 ---
 
 ## Global Constraints
@@ -72,7 +104,7 @@ P1 落地时依赖取最新，实际工具链与计划原文不同，执行本�
   - `GET /api/statistics/payments/future?months=12` → `FuturePaymentVo[]`
   - `GET /api/statistics/{categories,platforms,manufacturers,ips}?from=&to=` → `DimensionStatVo[]`
 
-- [ ] **Step 1: 写 DTO 与 VO**
+- [x] **Step 1: 写 DTO 与 VO**
 
 `dto/statistics-query.dto.ts`:
 
@@ -173,7 +205,7 @@ export interface DimensionStatVo {
 }
 ```
 
-- [ ] **Step 2: 写 `statistics.repository.ts`**
+- [x] **Step 2: 写 `statistics.repository.ts`**
 
 ```ts
 import { Injectable } from '@nestjs/common'
@@ -262,7 +294,7 @@ export class StatisticsRepository {
 }
 ```
 
-- [ ] **Step 3: 写 `statistics.service.ts`**
+- [x] **Step 3: 写 `statistics.service.ts`**
 
 ```ts
 import { Injectable } from '@nestjs/common'
@@ -548,7 +580,7 @@ function getStatus(order: { status: string; payments: unknown; shipments: unknow
 - `todos` 的 `priority` 采用 `docs/01 §11` 与 `docs/02 §18` 的顺序：逾期 > 1 天内 > 3 天内 > 7 天内 > 其他；把 `overdueDays` 与 `next.dueAt` 距今天数一起参与排序（逾期 0，1 天内 1，3 天内 2，7 天内 3，其余 4）。
 - `getMonthlyPayments` 用 `$queryRaw`，`Prisma` 需从 `@prisma/client` 导入（用于 `Prisma.sql` / `Prisma.empty`）。
 
-- [ ] **Step 4: 写 `statistics.service.spec.ts`**
+- [x] **Step 4: 写 `statistics.service.spec.ts`**
 
 ```ts
 import { StatisticsService } from './statistics.service'
@@ -669,7 +701,7 @@ describe('StatisticsService.getDimension', () => {
 })
 ```
 
-- [ ] **Step 5: 写 controller / module 并运行测试**
+- [x] **Step 5: 写 controller / module 并运行测试**
 
 ```ts
 @ApiTags('statistics')
@@ -748,7 +780,7 @@ git commit -m "feat(statistics): add dashboard, monthly cash flow, future paymen
   - `GET /api/collection?page=&pageSize=` → `Paginated<CollectionItemVo>`
   - `GET /api/collection/stats` → `{ totalItems: number; deliveredOrders: number; byCurrency: CurrencyAmountVo[] }`
 
-- [ ] **Step 1: 写 `calendar.service.ts`**
+- [x] **Step 1: 写 `calendar.service.ts`**
 
 ```ts
 export type CalendarEventType = 'PAYMENT_DUE' | 'EXPECTED_RELEASE' | 'RELEASED' | 'DELIVERY'
@@ -861,7 +893,7 @@ export class CalendarService {
 
 （`ORDER_INCLUDE`、`toOrderDomain`、`getDisplayStatus` 复用 Order 模块导出；`CalendarModule` 需 `imports: [OrderModule]` 才能拿到 `ORDER_INCLUDE` 常量——若按常量导入则无需模块依赖。）
 
-- [ ] **Step 2: 写 `collection.service.ts`**
+- [x] **Step 2: 写 `collection.service.ts`**
 
 ```ts
 export interface CollectionItemVo {
@@ -954,7 +986,7 @@ export class CollectionService {
 }
 ```
 
-- [ ] **Step 3: 写两份 spec（要点）**
+- [x] **Step 3: 写两份 spec（要点）**
 
 `calendar.service.spec.ts`：
 
@@ -976,7 +1008,7 @@ it('stats 按币种分开汇总', async () => { /* CNY 与 JPY 分别聚合，�
 
 两个 spec 的 `$transaction` 用 `vi.fn(async operations => Promise.all(operations))`，与 P2/P3 一致。
 
-- [ ] **Step 4: 写 controller / module 并运行测试**
+- [x] **Step 4: 写 controller / module 并运行测试**
 
 `dto/calendar-query.dto.ts`（区间必填）：
 
@@ -1054,7 +1086,7 @@ git commit -m "feat(calendar): add calendar events and collection derivation"
   - `GET /api/attachments/:id/url?expiresIn=` → `{ signedUrl }`
 - 规则（`docs/03 §38`）：bucket 只有 `product-images` / `attachments`；校验归属、MIME 白名单与体积；路径固定 `${userId}/${targetId}/${uuid}-${safeFileName}`。
 
-- [ ] **Step 1: 写 DTO**
+- [x] **Step 1: 写 DTO**
 
 ```ts
 // dto/upload-url.dto.ts
@@ -1095,7 +1127,7 @@ export class CreateAttachmentDto {
 }
 ```
 
-- [ ] **Step 2: 写 `attachment.service.ts`**
+- [x] **Step 2: 写 `attachment.service.ts`**
 
 ```ts
 const BUCKETS = ['product-images', 'attachments'] as const
@@ -1217,7 +1249,7 @@ export function toAttachmentVo(attachment: {
 
 `AttachmentVo`：`{ id, type, fileName, storagePath, mimeType, fileSize: string | null, createdAt }`（`BigInt` 出口转 string，避免 JSON 序列化报错）。
 
-- [ ] **Step 3: 写 `attachment.service.spec.ts`**
+- [x] **Step 3: 写 `attachment.service.spec.ts`**
 
 ```ts
 import { AttachmentService } from './attachment.service'
@@ -1321,7 +1353,7 @@ describe('AttachmentService.remove', () => {
 })
 ```
 
-- [ ] **Step 4: 写 controller / module 并运行测试**
+- [x] **Step 4: 写 controller / module 并运行测试**
 
 ```ts
 @ApiTags('attachments')
@@ -1356,7 +1388,7 @@ export class AttachmentController {
 
 Run: `pnpm --filter @hobilog/server test && pnpm --filter @hobilog/server typecheck`
 
-- [ ] **Step 5: 手动核对 Supabase Bucket**
+- [x] **Step 5: 手动核对 Supabase Bucket**
 
 在 Supabase 控制台确认存在两个 bucket：`product-images`、`attachments`。若不存在则创建（私有），并把 Public 设为关闭（V0.1 只走 signed URL）。
 
@@ -1383,7 +1415,7 @@ git commit -m "feat(attachment): add signed upload url, metadata and deletion"
 - Produces：`GET /api/notifications/todos` → `ReminderVo[]`
 - 提醒规则（`docs/02 §37`、`docs/07 §67-72`）：`due_at ∈ {7,3,1,0} 天`、已逾期、本月出货、发生延期、长时间未更新（`ACTIVE` 且 `updatedAt` 早于 30 天前）；订单已取消 / 归档则不出提醒。
 
-- [ ] **Step 1: 写 `notification.service.ts`**
+- [x] **Step 1: 写 `notification.service.ts`**
 
 ```ts
 export interface ReminderVo {
@@ -1518,7 +1550,7 @@ export class NotificationService {
 }
 ```
 
-- [ ] **Step 2: 写 `notification.service.spec.ts`（要点）**
+- [x] **Step 2: 写 `notification.service.spec.ts`（要点）**
 
 ```ts
 it('尾款 3 天后截止 → PAYMENT_DUE_SOON 且 daysLeft = 3', async () => { /* dueAt = 今天+3 */ })
@@ -1531,7 +1563,7 @@ it('超过 30 天未更新 → STALE_ORDER', async () => { /* updatedAt 设为 4
 it('排序：逾期 > 当天 > 1 天 > 3 天 > 7 天 > 本月出货 > 延期 > 长期未更新', async () => { /* 构造多条断言 id 顺序 */ })
 ```
 
-- [ ] **Step 3: 写 controller / module 并运行测试**
+- [x] **Step 3: 写 controller / module 并运行测试**
 
 ```ts
 @ApiTags('notifications')
@@ -1570,7 +1602,7 @@ git commit -m "feat(notification): add in-app reminder computation"
 - Consumes: P4 全部接口 + 真实 PostgreSQL（Storage 调用在 e2e 中被 mock）
 - Produces: 读侧验收证据
 
-- [ ] **Step 1: 写读侧 e2e**
+- [x] **Step 1: 写读侧 e2e**
 
 沿用 P3 e2e 的骨架（真实 Prisma + `overrideProvider(SupabaseService)`），追加：
 
@@ -1634,7 +1666,7 @@ it('附件上传地址：归属校验通过时返回 path 前缀为 userId', asy
 
 （`orderId` 复用 P3 e2e 中创建的订单；Storage 的 `createSignedUploadUrl` 需在 `overrideProvider(SupabaseService)` 的 mock 中返回 `{ data: { token: 't', signedUrl: 'https://signed' }, error: null }`。）
 
-- [ ] **Step 2: 运行全部检查**
+- [x] **Step 2: 运行全部检查**
 
 Run:
 
@@ -1647,7 +1679,7 @@ pnpm -r typecheck
 
 Expected: 全绿；`read-models.e2e-spec.ts` 全 PASS。
 
-- [ ] **Step 3: 写验收记录并汇报**
+- [x] **Step 3: 写验收记录并汇报**
 
 `docs/superpowers/verification/2026-09-18-P4-verification.md` 记录命令、期望、实际、结论（含「多币种不合并」「归档订单不出现在统计与日历」两条口径验证）。
 

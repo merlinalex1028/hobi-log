@@ -11,7 +11,7 @@
 - 安装：`pnpm install`
 - 构建：`pnpm -r build`（拓扑序：shared → server）
 - 单测：`pnpm -r test`（server 侧只跑 `src`，不依赖数据库）
-- e2e：`pnpm --filter @hobilog/server test:e2e`（跑 `test/`；`test/setup-env.ts` 会先加载 `apps/server/.env`，所以 `order-lifecycle.e2e-spec.ts` 打的是**真实 Supabase PostgreSQL**，只用两个固定假 UUID 造数据并自清理；远端往返慢，该文件单独设了 30s 超时）
+- e2e：`pnpm --filter @hobilog/server test:e2e`（跑 `test/`；`test/setup-env.ts` 会把 `DATABASE_URL`/`DIRECT_URL` 强制指向**本地测试库**（默认 `postgresql://postgres:postgres@localhost:5433/hobilog_test`，可用 `TEST_DATABASE_URL` 覆盖），不会碰远端 Supabase。本地库用 `docker run -d --name hobilog-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=hobilog_test -p 5433:5432 postgres:17-alpine` 起，再用 `DATABASE_URL=postgresql://postgres:postgres@localhost:5433/hobilog_test pnpm --filter @hobilog/server exec prisma migrate deploy` 建表）
 - 类型检查：`pnpm -r typecheck`
 - 生成 Prisma Client：`pnpm db:generate`（改了 `prisma/schema.prisma` 后必跑）
 - 迁移：`pnpm --filter @hobilog/server exec prisma migrate dev --name <name>`

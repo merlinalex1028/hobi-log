@@ -281,12 +281,13 @@ GET /statistics/ips
 ## 16. Attachment API
 
 ```text
-POST /attachments/upload-url
-POST /attachments
+POST   /attachments/upload-url
+POST   /attachments
+GET    /attachments/:id/url?expiresIn=
 DELETE /attachments/:id
 ```
 
-文件上传使用 signed URL，避免大文件必须经过 NestJS。
+文件上传使用 signed URL，避免大文件必须经过 NestJS。bucket 固定为 `product-images` / `attachments`（均为私有，读取一律走签名 URL，`expiresIn` 默认 3600 秒、范围 60–604800）。MIME 白名单 `image/jpeg|png|webp|gif` + `application/pdf`，单文件 ≤ 10 MB；`storagePath` 固定 `${userId}/${targetId}/${uuid}-${safeFileName}`。
 
 ## 17. DisplayStatus
 
@@ -386,3 +387,88 @@ supabase.auth.*
 ```
 
 以及 signed URL 文件上传。
+
+## 23. Calendar API
+
+```text
+GET /calendar/events?from=&to=
+```
+
+`from` / `to` 必填（ISO8601，含首含尾）。返回 `CalendarEventVo[]`：
+
+```ts
+{
+  id: string            // payment:<id> | release:<id> | delivery:<id>
+  type: 'PAYMENT_DUE' | 'EXPECTED_RELEASE' | 'RELEASED' | 'DELIVERY'
+  date: string          // YYYY-MM-DD
+  orderId: string
+  title: string
+  amount: number | null
+  currency: string | null
+  precision: string | null
+  displayStatus: string
+}
+```
+
+- 来源：`Payment.dueAt`（`PENDING` / `PAID`）、`ReleaseEvent.newDate`（`EXPECTED_RELEASE` / `DELAY` / `RELEASED`）、`Shipment.deliveredAt ?? estimatedDeliveryAt`。
+- `DELAY` 归一为 `EXPECTED_RELEASE` 类型，`datePrecision` 原样透传。
+- 同一天按 `PAYMENT_DUE > DELIVERY > EXPECTED_RELEASE > RELEASED` 排序。
+- 显式过滤当前用户，并排除 `archived = true` 的订单。
+
+## 24. Collection API
+
+```text
+GET /collection?page=&pageSize=
+GET /collection/stats
+```
+
+`CollectionItemVo`：
+
+```ts
+{
+  orderItemId: string
+  orderId: string
+  productId: string
+  name: string
+  coverUrl: string | null
+  quantity: number
+  purchasePrice: number   // OrderItem.subtotal
+  currency: string
+  purchasedAt: string     // YYYY-MM-DD（Order.orderedAt）
+  deliveredAt: string | null
+}
+```
+
+- 收录口径：`Order` 未归档且存在 `status = DELIVERED` 的 `Shipment`；不新增业务表。
+- `deliveredAt` 取该订单项所有已签收包裹中最早一次签收日，无则 `null`。
+- `GET /collection/stats` 返回 `{ totalItems, deliveredOrders, byCurrency }`；`totalItems` 为 `OrderItem.quantity` 求和（docs/07 §64），`byCurrency` 按币种分开、不跨币种相加。
+
+## 25. Notification API
+
+```text
+GET /notifications/todos
+```
+
+`ReminderVo[]`：
+
+```ts
+{
+  id: string            // payment-overdue:<paymentId> | payment-soon:<paymentId> | release-month:<orderId> | release-delayed:<orderId> | stale:<orderId>
+  kind: 'PAYMENT_DUE_SOON' | 'PAYMENT_OVERDUE' | 'RELEASE_THIS_MONTH' | 'RELEASE_DELAYED' | 'STALE_ORDER'
+  orderId: string
+  title: string
+  dueAt: string | null       // YYYY-MM-DD
+  daysLeft: number | null
+  overdueDays: number | null
+  amount: number | null
+  currency: string | null
+  priority: number
+}
+```
+
+- 数据来源：`Order` 显式过滤 `userId`、`archived = false`、`status = ACTIVE`（docs/07 §71-72），最多取 200 条。
+- 付款提醒（docs/07 §67-70）：仅 `Payment.status = PENDING` 且 `dueAt != null`；`dueAt < today` 为 `PAYMENT_OVERDUE`（`overdueDays` 为正），`daysLeft ∈ {7,3,1,0}` 为 `PAYMENT_DUE_SOON`。
+- 出货提醒：计划出货日落在本月为 `RELEASE_THIS_MONTH`；`getDelayMonths > 0` 且尚未出货为 `RELEASE_DELAYED`。
+- 长期未更新：`status = ACTIVE` 且 `updatedAt` 早于 30 天前为 `STALE_ORDER`。
+- 排序：`priority` 升序（逾期 0 → 当天 1 → 1 天 2 → 3 天 3 → 7 天 4 → 本月出货 5 → 延期 6 → 长期未更新 9），同优先级按 `id` 字典序。
+- V0.1 只提供查询接口，不做定时任务；调度绝不放 Vue（docs/08 §16）。
