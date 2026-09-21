@@ -11,11 +11,11 @@ import {
   type DimensionKey,
 } from '@/api/statistics.api'
 import AppEmpty from '@/components/common/AppEmpty.vue'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import AppSection from '@/components/common/AppSection.vue'
 import CategoryChart from '@/components/statistics/CategoryChart.vue'
-import FuturePaymentChart from '@/components/statistics/FuturePaymentChart.vue'
+import FuturePaymentChart from '@/components/chart/FuturePaymentChart.vue'
 import IpRanking from '@/components/statistics/IpRanking.vue'
 import ManufacturerChart from '@/components/statistics/ManufacturerChart.vue'
 import PaymentTrendChart from '@/components/statistics/PaymentTrendChart.vue'
@@ -144,9 +144,7 @@ const rankingCurrency = computed(() => {
       </template>
     </AppPageHeader>
 
-    <AppErrorState v-if="isError" @retry="retry" />
-    <el-skeleton v-else-if="isLoading" :rows="8" />
-    <template v-else>
+    <AppQueryState :error="isError" :loading="isLoading" @retry="retry">
       <StatisticsKpiGrid :kpis="kpis" @navigate="path => router.push(path)" />
 
       <AppSection title="付款趋势（近 12 个月）" description="柱：实付净额 / 虚线：订单规模">
@@ -187,7 +185,7 @@ const rankingCurrency = computed(() => {
         />
         <IpRanking v-else :rows="ips" :currency="rankingCurrency" />
       </AppSection>
-    </template>
+    </AppQueryState>
   </div>
 </template>
 

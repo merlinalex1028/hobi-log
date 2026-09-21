@@ -6,7 +6,7 @@ import type { ProductCategory } from '@hobilog/shared'
 import { getProductList } from '@/api/product.api'
 import { queryKeys } from '@/api/query-keys'
 import AppEmpty from '@/components/common/AppEmpty.vue'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import ProductCard from '@/components/product/ProductCard.vue'
 import ProductFilterBar from '@/components/product/ProductFilterBar.vue'
@@ -86,35 +86,35 @@ async function onSaved(): Promise<void> {
 
     <ProductFilterBar v-model="filters" @search="refetch" @reset="resetFilters" />
 
-    <AppErrorState v-if="isError" @retry="refetch" />
-    <el-skeleton v-else-if="isLoading" :rows="6" />
-    <AppEmpty
-      v-else-if="!data || data.items.length === 0"
-      title="还没有商品"
-      description="先创建商品，再把它加入订单。"
-      action-text="新建商品"
-      @action="openCreate"
-    />
-    <template v-else>
-      <div class="product-grid">
-        <ProductCard
-          v-for="product in data.items"
-          :key="product.id"
-          :product="product"
-          @click="id => router.push(`/products/${id}`)"
-          @edit="openEdit"
-        />
-      </div>
-      <el-pagination
-        v-if="total > filters.pageSize"
-        class="product-pagination"
-        layout="prev, pager, next, total"
-        :current-page="filters.page"
-        :page-size="filters.pageSize"
-        :total="total"
-        @current-change="onPageChange"
+    <AppQueryState :error="isError" :loading="isLoading" :rows="6" @retry="refetch">
+      <AppEmpty
+        v-if="!data || data.items.length === 0"
+        title="还没有商品"
+        description="先创建商品，再把它加入订单。"
+        action-text="新建商品"
+        @action="openCreate"
       />
-    </template>
+      <template v-else>
+        <div class="product-grid">
+          <ProductCard
+            v-for="product in data.items"
+            :key="product.id"
+            :product="product"
+            @click="id => router.push(`/products/${id}`)"
+            @edit="openEdit"
+          />
+        </div>
+        <el-pagination
+          v-if="total > filters.pageSize"
+          class="product-pagination"
+          layout="prev, pager, next, total"
+          :current-page="filters.page"
+          :page-size="filters.pageSize"
+          :total="total"
+          @current-change="onPageChange"
+        />
+      </template>
+    </AppQueryState>
 
     <ProductFormDrawer v-model="drawerVisible" :product="editingProduct" @saved="onSaved" />
   </div>

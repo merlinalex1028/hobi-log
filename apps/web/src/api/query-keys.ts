@@ -32,9 +32,9 @@ export const queryKeys = {
   notifications: ['notifications', 'todos'] as const,
 }
 
-export const ORDER_MUTATION_INVALIDATIONS = [
-  ['orders'],
-  ['statistics'],
-  ['calendar'],
-  ['notifications'],
-] as const
+export const MUTATION_INVALIDATION_KEYS = {
+  order: [queryKeys.orders.all, ['statistics'], ['calendar'], ['notifications']],
+  platform: [queryKeys.platforms.all, queryKeys.stores.all],
+} as const
+
+export type MutationDomain = keyof typeof MUTATION_INVALIDATION_KEYS

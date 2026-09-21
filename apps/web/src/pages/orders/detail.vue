@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useMutation, useQuery } from '@tanstack/vue-query'
 import { ElMessage } from 'element-plus'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { ShipmentStatus } from '@hobilog/shared'
 import { cancelOrder, getOrderDetail, type OrderPaymentPayload } from '@/api/order.api'
 import { createPayment, markPaymentPaid, refundPayment, updatePayment } from '@/api/payment.api'
-import { ORDER_MUTATION_INVALIDATIONS, queryKeys } from '@/api/query-keys'
+import { queryKeys } from '@/api/query-keys'
 import { delayRelease, markReleased, markStoreArrived, openBalance } from '@/api/release.api'
 import { createShipment, deliverShipment, updateShipment } from '@/api/shipment.api'
 import AttachmentSection from '@/components/attachment/AttachmentSection.vue'
 import AppCurrency from '@/components/common/AppCurrency.vue'
 import AppDate from '@/components/common/AppDate.vue'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppSection from '@/components/common/AppSection.vue'
 import OrderDetailHeader from '@/components/order/detail/OrderDetailHeader.vue'
 import OrderOverviewAside from '@/components/order/detail/OrderOverviewAside.vue'
@@ -24,6 +24,7 @@ import ReleaseDelayDialog from '@/components/release/ReleaseDelayDialog.vue'
 import ReleaseDetailSection from '@/components/release/ReleaseDetailSection.vue'
 import ShipmentDetailSection from '@/components/shipment/ShipmentDetailSection.vue'
 import ShipmentFormDrawer from '@/components/shipment/ShipmentFormDrawer.vue'
+import { useInvalidate } from '@/composables/useInvalidate'
 import { plannedReleaseOf } from '@/utils/release'
 
 type MarkPaidPayload = Parameters<typeof markPaymentPaid>[1]
@@ -34,7 +35,7 @@ type ShipmentUpdatePayload = Parameters<typeof updateShipment>[1]
 
 const route = useRoute()
 const router = useRouter()
-const queryClient = useQueryClient()
+const invalidate = useInvalidate()
 
 const orderId = computed(() => String(route.params.id ?? ''))
 
@@ -61,9 +62,7 @@ const editingShipment = computed(
 const releasePlan = computed(() => plannedReleaseOf(order.value?.releaseEvents ?? []))
 
 async function refresh(): Promise<void> {
-  await Promise.all(
-    ORDER_MUTATION_INVALIDATIONS.map(queryKey => queryClient.invalidateQueries({ queryKey })),
-  )
+  await invalidate('order')
   await refetch()
 }
 
@@ -248,117 +247,116 @@ function updateShipmentBody(payload: ShipmentUpdatePayload): void {
 
 <template>
   <div>
-    <AppErrorState v-if="isError" message="订单加载失败" @retry="refetch" />
-    <el-skeleton v-else-if="isLoading" :rows="10" />
+    <AppQueryState :error="isError" :loading="isLoading" :rows="10" error-message="订单加载失败" @retry="refetch">
+      <template v-if="order">
+        <OrderDetailHeader
+          :order="order"
+          :canceling="cancelMutation.isPending.value"
+          @edit="router.push(`/orders/${orderId}/edit`)"
+          @cancel="payload => cancelMutation.mutate(payload)"
+        />
 
-    <template v-else-if="order">
-      <OrderDetailHeader
-        :order="order"
-        :canceling="cancelMutation.isPending.value"
-        @edit="router.push(`/orders/${orderId}/edit`)"
-        @cancel="payload => cancelMutation.mutate(payload)"
-      />
+        <div class="order-detail">
+          <div class="order-detail__main">
+            <AppSection title="商品" description="下单时的商品与本次单价">
+              <el-table :data="order.items" row-key="id">
+                <el-table-column label="商品" min-width="220">
+                  <template #default="{ row }">{{ row.productName }}</template>
+                </el-table-column>
+                <el-table-column label="本次单价" width="140">
+                  <template #default="{ row }">
+                    <AppCurrency :amount="row.unitPrice" :currency="order.currency" />
+                  </template>
+                </el-table-column>
+                <el-table-column label="数量" width="90">
+                  <template #default="{ row }">{{ row.quantity }}</template>
+                </el-table-column>
+                <el-table-column label="小计" width="140">
+                  <template #default="{ row }">
+                    <AppCurrency :amount="row.subtotal" :currency="order.currency" />
+                  </template>
+                </el-table-column>
+              </el-table>
+            </AppSection>
 
-      <div class="order-detail">
-        <div class="order-detail__main">
-          <AppSection title="商品" description="下单时的商品与本次单价">
-            <el-table :data="order.items" row-key="id">
-              <el-table-column label="商品" min-width="220">
-                <template #default="{ row }">{{ row.productName }}</template>
-              </el-table-column>
-              <el-table-column label="本次单价" width="140">
-                <template #default="{ row }">
-                  <AppCurrency :amount="row.unitPrice" :currency="order.currency" />
-                </template>
-              </el-table-column>
-              <el-table-column label="数量" width="90">
-                <template #default="{ row }">{{ row.quantity }}</template>
-              </el-table-column>
-              <el-table-column label="小计" width="140">
-                <template #default="{ row }">
-                  <AppCurrency :amount="row.subtotal" :currency="order.currency" />
-                </template>
-              </el-table-column>
-            </el-table>
-          </AppSection>
+            <PaymentDetailSection
+              :order="order"
+              @mark-paid="openMarkPaid"
+              @refund="openRefund"
+              @save="savePayment"
+              @create="payload => createPaymentMutation.mutate(payload)"
+            />
 
-          <PaymentDetailSection
+            <ReleaseDetailSection
+              :order="order"
+              @delay="openDelay"
+              @released="releaseMutation.mutate('released')"
+              @store-arrived="releaseMutation.mutate('store-arrived')"
+              @balance-open="releaseMutation.mutate('balance-open')"
+            />
+
+            <ShipmentDetailSection
+              :order="order"
+              @create="openShipmentForm"
+              @update-status="updateShipmentStatus"
+              @deliver="id => deliverMutation.mutate(id)"
+              @edit="editShipment"
+            />
+
+            <AttachmentSection :order-id="order.id" :attachments="order.attachments" @changed="refresh" />
+
+            <AppSection title="时间轴" description="付款 / 出货 / 物流 / 订单">
+              <OrderTimeline :items="order.timeline" />
+            </AppSection>
+          </div>
+
+          <OrderOverviewAside
             :order="order"
-            @mark-paid="openMarkPaid"
-            @refund="openRefund"
-            @save="savePayment"
-            @create="payload => createPaymentMutation.mutate(payload)"
+            @mark-paid="openMarkPaid()"
+            @release="openDelay"
+            @shipment="openShipmentForm"
           />
-
-          <ReleaseDetailSection
-            :order="order"
-            @delay="openDelay"
-            @released="releaseMutation.mutate('released')"
-            @store-arrived="releaseMutation.mutate('store-arrived')"
-            @balance-open="releaseMutation.mutate('balance-open')"
-          />
-
-          <ShipmentDetailSection
-            :order="order"
-            @create="openShipmentForm"
-            @update-status="updateShipmentStatus"
-            @deliver="id => deliverMutation.mutate(id)"
-            @edit="editShipment"
-          />
-
-          <AttachmentSection :order-id="order.id" :attachments="order.attachments" @changed="refresh" />
-
-          <AppSection title="时间轴" description="付款 / 出货 / 物流 / 订单">
-            <OrderTimeline :items="order.timeline" />
-          </AppSection>
         </div>
 
-        <OrderOverviewAside
-          :order="order"
-          @mark-paid="openMarkPaid()"
-          @release="openDelay"
-          @shipment="openShipmentForm"
+        <MarkPaymentPaidDialog
+          :model-value="markPaidTarget !== null"
+          :payment="markPaidPayment"
+          @update:model-value="closeMarkPaid"
+          @submit="submitMarkPaid"
         />
-      </div>
 
-      <MarkPaymentPaidDialog
-        :model-value="markPaidTarget !== null"
-        :payment="markPaidPayment"
-        @update:model-value="closeMarkPaid"
-        @submit="submitMarkPaid"
-      />
+        <RefundPaymentDialog
+          :model-value="refundTarget !== null"
+          :payment="refundPaymentNode"
+          :refunded-amount="order.paymentSummary.refundAmount"
+          @update:model-value="closeRefund"
+          @submit="submitRefund"
+        />
 
-      <RefundPaymentDialog
-        :model-value="refundTarget !== null"
-        :payment="refundPaymentNode"
-        :refunded-amount="order.paymentSummary.refundAmount"
-        @update:model-value="closeRefund"
-        @submit="submitRefund"
-      />
+        <ReleaseDelayDialog
+          v-model="delayVisible"
+          :current-date="releasePlan.date"
+          :current-precision="releasePlan.precision"
+          :saving="delayMutation.isPending.value"
+          @submit="payload => delayMutation.mutate(payload)"
+        />
 
-      <ReleaseDelayDialog
-        v-model="delayVisible"
-        :current-date="releasePlan.date"
-        :current-precision="releasePlan.precision"
-        :saving="delayMutation.isPending.value"
-        @submit="payload => delayMutation.mutate(payload)"
-      />
+        <ShipmentFormDrawer
+          :model-value="shipmentVisible"
+          :order-items="order.items"
+          :shipments="order.shipments"
+          :shipment="editingShipment"
+          :saving="shipmentMutation.isPending.value || shipmentUpdateMutation.isPending.value"
+          @update:model-value="onShipmentVisible"
+          @submit="submitShipment"
+          @update="updateShipmentBody"
+        />
 
-      <ShipmentFormDrawer
-        :model-value="shipmentVisible"
-        :order-items="order.items"
-        :shipments="order.shipments"
-        :shipment="editingShipment"
-        :saving="shipmentMutation.isPending.value || shipmentUpdateMutation.isPending.value"
-        @update:model-value="onShipmentVisible"
-        @submit="submitShipment"
-        @update="updateShipmentBody"
-      />
-
-      <p class="text-secondary order-detail__updated">
-        最后更新：<AppDate :value="order.updatedAt" />
-      </p>
-    </template>
+        <p class="text-secondary order-detail__updated">
+          最后更新：<AppDate :value="order.updatedAt" />
+        </p>
+      </template>
+    </AppQueryState>
   </div>
 </template>
 

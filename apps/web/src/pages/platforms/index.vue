@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useMutation, useQuery } from '@tanstack/vue-query'
 import type { CreatePlatformPayload, PlatformListParams } from '@/api/platform.api'
 import {
   createPlatform,
@@ -12,15 +12,16 @@ import {
 import { queryKeys } from '@/api/query-keys'
 import type { CreateStorePayload, StoreListParams } from '@/api/store.api'
 import { createStore, deleteStore, getStoreList, updateStore } from '@/api/store.api'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import PlatformList from '@/components/platform/PlatformList.vue'
 import StoreList from '@/components/platform/StoreList.vue'
+import { useInvalidate } from '@/composables/useInvalidate'
 
 const OPTION_PAGE_SIZE = 100
 const STORE_PAGE_SIZE = 20
 
-const queryClient = useQueryClient()
+const invalidate = useInvalidate()
 
 const selectedPlatformId = ref<string | null>(null)
 const storePage = ref(1)
@@ -59,8 +60,7 @@ const stores = computed(() => storePageData.value?.items ?? [])
 const storeTotal = computed(() => storePageData.value?.total ?? 0)
 
 async function invalidatePlatforms(): Promise<void> {
-  await queryClient.invalidateQueries({ queryKey: queryKeys.platforms.all })
-  await queryClient.invalidateQueries({ queryKey: queryKeys.stores.all })
+  await invalidate('platform')
 }
 
 const createPlatformMutation = useMutation({
@@ -118,36 +118,41 @@ async function retry(): Promise<void> {
 
     <p v-if="message" class="text-secondary">{{ message }}</p>
 
-    <AppErrorState v-if="platformsError || storesError" @retry="retry" />
-    <el-skeleton v-else-if="platformsLoading || storesLoading" :rows="6" />
-    <div v-else class="platform-page">
-      <section class="app-card">
-        <PlatformList
-          :platforms="platforms"
-          :selected-id="selectedPlatformId"
-          @select="selectPlatform"
-          @create="payload => createPlatformMutation.mutate(payload)"
-          @update="(id, payload) => updatePlatformMutation.mutate({ id, payload })"
-          @remove="id => deletePlatformMutation.mutate(id)"
-          @import-presets="importPresetsMutation.mutate()"
-        />
-      </section>
+    <AppQueryState
+      :error="platformsError || storesError"
+      :loading="platformsLoading || storesLoading"
+      :rows="6"
+      @retry="retry"
+    >
+      <div class="platform-page">
+        <section class="app-card">
+          <PlatformList
+            :platforms="platforms"
+            :selected-id="selectedPlatformId"
+            @select="selectPlatform"
+            @create="payload => createPlatformMutation.mutate(payload)"
+            @update="(id, payload) => updatePlatformMutation.mutate({ id, payload })"
+            @remove="id => deletePlatformMutation.mutate(id)"
+            @import-presets="importPresetsMutation.mutate()"
+          />
+        </section>
 
-      <section class="app-card">
-        <StoreList
-          :stores="stores"
-          :platforms="platforms"
-          :platform-id="selectedPlatformId"
-          :total="storeTotal"
-          :page="storePage"
-          :page-size="STORE_PAGE_SIZE"
-          @create="payload => createStoreMutation.mutate(payload)"
-          @update="(id, payload) => updateStoreMutation.mutate({ id, payload })"
-          @remove="id => deleteStoreMutation.mutate(id)"
-          @page-change="next => (storePage = next)"
-        />
-      </section>
-    </div>
+        <section class="app-card">
+          <StoreList
+            :stores="stores"
+            :platforms="platforms"
+            :platform-id="selectedPlatformId"
+            :total="storeTotal"
+            :page="storePage"
+            :page-size="STORE_PAGE_SIZE"
+            @create="payload => createStoreMutation.mutate(payload)"
+            @update="(id, payload) => updateStoreMutation.mutate({ id, payload })"
+            @remove="id => deleteStoreMutation.mutate(id)"
+            @page-change="next => (storePage = next)"
+          />
+        </section>
+      </div>
+    </AppQueryState>
   </div>
 </template>
 

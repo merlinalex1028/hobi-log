@@ -1,21 +1,22 @@
 <script setup lang="ts">
-import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useQuery } from '@tanstack/vue-query'
 import { ElMessage } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getOrderDetail, updateOrder } from '@/api/order.api'
 import { queryKeys } from '@/api/query-keys'
 import AppEmpty from '@/components/common/AppEmpty.vue'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import OrderForm from '@/components/order/OrderForm.vue'
 import { useOrderForm } from '@/composables/useOrderForm'
+import { useInvalidate } from '@/composables/useInvalidate'
 import type { OrderFormModel } from '@/types/forms'
 import { toOrderFormModel } from '@/utils/order-form'
 
 const route = useRoute()
 const router = useRouter()
-const queryClient = useQueryClient()
+const invalidate = useInvalidate()
 
 const orderId = computed(() => String(route.params.id ?? ''))
 const saving = ref(false)
@@ -45,7 +46,7 @@ async function onSubmit(): Promise<void> {
   try {
     await updateOrder(orderId.value, toUpdatePayload())
     ElMessage.success('订单已更新')
-    await queryClient.invalidateQueries({ queryKey: queryKeys.orders.all })
+    await invalidate('order')
     await router.replace(`/orders/${orderId.value}`)
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '更新失败')
@@ -63,23 +64,23 @@ async function onSubmit(): Promise<void> {
       </template>
     </AppPageHeader>
 
-    <AppErrorState v-if="isError" @retry="refetch" />
-    <el-skeleton v-else-if="isLoading" :rows="8" />
-    <OrderForm
-      v-else-if="order"
-      :model-value="form"
-      mode="edit"
-      :loading="saving"
-      @update:model-value="applyForm"
-      @submit="onSubmit"
-      @cancel="router.push(`/orders/${orderId}`)"
-    />
-    <AppEmpty
-      v-else
-      title="订单不存在"
-      description="它可能已被删除，或不属于当前账号。"
-      action-text="返回订单列表"
-      @action="router.push('/orders')"
-    />
+    <AppQueryState :error="isError" :loading="isLoading" @retry="refetch">
+      <OrderForm
+        v-if="order"
+        :model-value="form"
+        mode="edit"
+        :loading="saving"
+        @update:model-value="applyForm"
+        @submit="onSubmit"
+        @cancel="router.push(`/orders/${orderId}`)"
+      />
+      <AppEmpty
+        v-else
+        title="订单不存在"
+        description="它可能已被删除，或不属于当前账号。"
+        action-text="返回订单列表"
+        @action="router.push('/orders')"
+      />
+    </AppQueryState>
   </div>
 </template>

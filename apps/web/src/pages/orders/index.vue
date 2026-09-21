@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 import { getOrderList } from '@/api/order.api'
 import { queryKeys } from '@/api/query-keys'
 import AppEmpty from '@/components/common/AppEmpty.vue'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import OrderFilterBar from '@/components/order/OrderFilterBar.vue'
 import OrderGrid from '@/components/order/OrderGrid.vue'
@@ -76,42 +76,42 @@ function onQuickAction(_action: string, id: string): void {
       <OrderViewSwitch :model-value="viewPreference.orderView" @update:model-value="viewPreference.setOrderView" />
     </div>
 
-    <AppErrorState v-if="isError" @retry="refetch" />
-    <el-skeleton v-else-if="isLoading" :rows="8" />
-    <AppEmpty
-      v-else-if="items.length === 0"
-      title="还没有任何订单"
-      description="把第一件正在等到家的收藏记录下来吧。"
-      action-text="创建订单"
-      @action="router.push('/orders/create')"
-    />
-    <template v-else>
-      <OrderTable
-        v-if="viewPreference.orderView === 'table'"
-        :items="items"
-        @view="id => router.push(`/orders/${id}`)"
-        @edit="id => router.push(`/orders/${id}/edit`)"
-        @mark-payment="id => onQuickAction('mark-payment', id)"
-        @update-release="id => onQuickAction('update-release', id)"
-        @add-shipment="id => onQuickAction('add-shipment', id)"
+    <AppQueryState :error="isError" :loading="isLoading" @retry="refetch">
+      <AppEmpty
+        v-if="items.length === 0"
+        title="还没有任何订单"
+        description="把第一件正在等到家的收藏记录下来吧。"
+        action-text="创建订单"
+        @action="router.push('/orders/create')"
       />
-      <OrderGrid
-        v-else
-        :items="items"
-        @click="id => router.push(`/orders/${id}`)"
-        @quick-action="onQuickAction"
-      />
+      <template v-else>
+        <OrderTable
+          v-if="viewPreference.orderView === 'table'"
+          :items="items"
+          @view="id => router.push(`/orders/${id}`)"
+          @edit="id => router.push(`/orders/${id}/edit`)"
+          @mark-payment="id => onQuickAction('mark-payment', id)"
+          @update-release="id => onQuickAction('update-release', id)"
+          @add-shipment="id => onQuickAction('add-shipment', id)"
+        />
+        <OrderGrid
+          v-else
+          :items="items"
+          @click="id => router.push(`/orders/${id}`)"
+          @quick-action="onQuickAction"
+        />
 
-      <el-pagination
-        class="orders-pagination"
-        layout="prev, pager, next, sizes"
-        :total="total"
-        :current-page="filters.page"
-        :page-size="filters.pageSize"
-        @current-change="(page: number) => syncToRoute({ page })"
-        @size-change="(pageSize: number) => syncToRoute({ pageSize, page: 1 })"
-      />
-    </template>
+        <el-pagination
+          class="orders-pagination"
+          layout="prev, pager, next, sizes"
+          :total="total"
+          :current-page="filters.page"
+          :page-size="filters.pageSize"
+          @current-change="(page: number) => syncToRoute({ page })"
+          @size-change="(pageSize: number) => syncToRoute({ pageSize, page: 1 })"
+        />
+      </template>
+    </AppQueryState>
   </div>
 </template>
 

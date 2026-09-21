@@ -9,7 +9,7 @@ import { queryKeys } from '@/api/query-keys'
 import AppCurrency from '@/components/common/AppCurrency.vue'
 import AppDate from '@/components/common/AppDate.vue'
 import AppEmpty from '@/components/common/AppEmpty.vue'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppImage from '@/components/common/AppImage.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import AppSection from '@/components/common/AppSection.vue'
@@ -108,100 +108,100 @@ function openOrder(order: OrderListItem): void {
       </template>
     </AppPageHeader>
 
-    <AppErrorState v-if="isError" @retry="reload" />
-    <el-skeleton v-else-if="isLoading" :rows="8" />
-    <template v-else-if="product">
-      <div class="product-detail">
-        <div class="app-card product-detail__cover">
-          <AppImage :src="product.coverUrl" :alt="product.name" ratio="1 / 1" fit="contain" />
+    <AppQueryState :error="isError" :loading="isLoading" @retry="reload">
+      <template v-if="product">
+        <div class="product-detail">
+          <div class="app-card product-detail__cover">
+            <AppImage :src="product.coverUrl" :alt="product.name" ratio="1 / 1" fit="contain" />
+          </div>
+
+          <AppSection title="商品资料" class="product-detail__info">
+            <el-descriptions :column="2" border>
+              <el-descriptions-item label="商品名称">{{ product.name }}</el-descriptions-item>
+              <el-descriptions-item label="别名">{{ display(product.originalName) }}</el-descriptions-item>
+              <el-descriptions-item label="商品类型">{{ categoryLabel }}</el-descriptions-item>
+              <el-descriptions-item label="IP">{{ display(product.ipName) }}</el-descriptions-item>
+              <el-descriptions-item label="角色">{{ display(product.characterName) }}</el-descriptions-item>
+              <el-descriptions-item label="厂商">{{ display(product.manufacturer) }}</el-descriptions-item>
+              <el-descriptions-item label="系列">{{ display(product.seriesName) }}</el-descriptions-item>
+              <el-descriptions-item label="比例">{{ display(product.scale) }}</el-descriptions-item>
+              <el-descriptions-item label="版本">{{ display(product.version) }}</el-descriptions-item>
+              <el-descriptions-item label="SKU">{{ display(product.sku) }}</el-descriptions-item>
+              <el-descriptions-item label="官方价格">
+                <AppCurrency :amount="product.officialPrice" :currency="product.officialCurrency ?? 'CNY'" />
+              </el-descriptions-item>
+              <el-descriptions-item label="官方公布时间">
+                <AppDate :value="product.announcedAt" />
+              </el-descriptions-item>
+              <el-descriptions-item label="预计发售时间">
+                <AppDate :value="product.originalReleaseDate" :precision="releasePrecision" />
+              </el-descriptions-item>
+              <el-descriptions-item label="状态">{{ product.status === 'ARCHIVED' ? '已归档' : '在用' }}</el-descriptions-item>
+              <el-descriptions-item label="描述" :span="2">{{ display(product.description) }}</el-descriptions-item>
+            </el-descriptions>
+          </AppSection>
         </div>
 
-        <AppSection title="商品资料" class="product-detail__info">
-          <el-descriptions :column="2" border>
-            <el-descriptions-item label="商品名称">{{ product.name }}</el-descriptions-item>
-            <el-descriptions-item label="别名">{{ display(product.originalName) }}</el-descriptions-item>
-            <el-descriptions-item label="商品类型">{{ categoryLabel }}</el-descriptions-item>
-            <el-descriptions-item label="IP">{{ display(product.ipName) }}</el-descriptions-item>
-            <el-descriptions-item label="角色">{{ display(product.characterName) }}</el-descriptions-item>
-            <el-descriptions-item label="厂商">{{ display(product.manufacturer) }}</el-descriptions-item>
-            <el-descriptions-item label="系列">{{ display(product.seriesName) }}</el-descriptions-item>
-            <el-descriptions-item label="比例">{{ display(product.scale) }}</el-descriptions-item>
-            <el-descriptions-item label="版本">{{ display(product.version) }}</el-descriptions-item>
-            <el-descriptions-item label="SKU">{{ display(product.sku) }}</el-descriptions-item>
-            <el-descriptions-item label="官方价格">
-              <AppCurrency :amount="product.officialPrice" :currency="product.officialCurrency ?? 'CNY'" />
-            </el-descriptions-item>
-            <el-descriptions-item label="官方公布时间">
-              <AppDate :value="product.announcedAt" />
-            </el-descriptions-item>
-            <el-descriptions-item label="预计发售时间">
-              <AppDate :value="product.originalReleaseDate" :precision="releasePrecision" />
-            </el-descriptions-item>
-            <el-descriptions-item label="状态">{{ product.status === 'ARCHIVED' ? '已归档' : '在用' }}</el-descriptions-item>
-            <el-descriptions-item label="描述" :span="2">{{ display(product.description) }}</el-descriptions-item>
-          </el-descriptions>
+        <div class="product-detail__stats">
+          <div class="app-card product-detail__stat">
+            <div class="product-detail__stat-label">购买次数</div>
+            <div class="product-detail__stat-value">{{ orders.length }}</div>
+          </div>
+          <div class="app-card product-detail__stat">
+            <div class="product-detail__stat-label">累计支付</div>
+            <div v-if="paidTotals.length === 0" class="product-detail__stat-value">—</div>
+            <div v-for="total in paidTotals" :key="total.currency" class="product-detail__stat-value">
+              <AppCurrency :amount="total.amount" :currency="total.currency" />
+            </div>
+          </div>
+          <div class="app-card product-detail__stat">
+            <div class="product-detail__stat-label">累计净支出</div>
+            <div v-if="netTotals.length === 0" class="product-detail__stat-value">—</div>
+            <div v-for="total in netTotals" :key="total.currency" class="product-detail__stat-value">
+              <AppCurrency :amount="total.amount" :currency="total.currency" />
+            </div>
+          </div>
+          <div class="app-card product-detail__stat">
+            <div class="product-detail__stat-label">收藏状态</div>
+            <div class="product-detail__stat-value">已入库 {{ deliveredCount }} 件</div>
+            <div class="product-detail__stat-hint">在途 {{ inTransitCount }} 件</div>
+          </div>
+        </div>
+
+        <AppSection title="相关订单" description="按商品名匹配的历史订单">
+          <AppEmpty v-if="orders.length === 0" title="还没有相关订单" description="创建订单并把该商品加进去。" />
+          <el-table v-else :data="orders" row-key="id" @row-click="openOrder">
+            <el-table-column label="订单号" min-width="160">
+              <template #default="{ row }">{{ row.orderNo ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="下单日期" min-width="120">
+              <template #default="{ row }">
+                <AppDate :value="row.orderedAt" />
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" min-width="140">
+              <template #default="{ row }">
+                <AppStatusTag :status="row.displayStatus" size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column label="件数" width="80">
+              <template #default="{ row }">{{ row.itemCount }}</template>
+            </el-table-column>
+            <el-table-column label="订单总额" min-width="140">
+              <template #default="{ row }">
+                <AppCurrency :amount="row.totalAmount" :currency="row.currency" />
+              </template>
+            </el-table-column>
+            <el-table-column label="净支出" min-width="140">
+              <template #default="{ row }">
+                <AppCurrency :amount="row.paymentSummary.netPaidAmount" :currency="row.currency" />
+              </template>
+            </el-table-column>
+          </el-table>
         </AppSection>
-      </div>
-
-      <div class="product-detail__stats">
-        <div class="app-card product-detail__stat">
-          <div class="product-detail__stat-label">购买次数</div>
-          <div class="product-detail__stat-value">{{ orders.length }}</div>
-        </div>
-        <div class="app-card product-detail__stat">
-          <div class="product-detail__stat-label">累计支付</div>
-          <div v-if="paidTotals.length === 0" class="product-detail__stat-value">—</div>
-          <div v-for="total in paidTotals" :key="total.currency" class="product-detail__stat-value">
-            <AppCurrency :amount="total.amount" :currency="total.currency" />
-          </div>
-        </div>
-        <div class="app-card product-detail__stat">
-          <div class="product-detail__stat-label">累计净支出</div>
-          <div v-if="netTotals.length === 0" class="product-detail__stat-value">—</div>
-          <div v-for="total in netTotals" :key="total.currency" class="product-detail__stat-value">
-            <AppCurrency :amount="total.amount" :currency="total.currency" />
-          </div>
-        </div>
-        <div class="app-card product-detail__stat">
-          <div class="product-detail__stat-label">收藏状态</div>
-          <div class="product-detail__stat-value">已入库 {{ deliveredCount }} 件</div>
-          <div class="product-detail__stat-hint">在途 {{ inTransitCount }} 件</div>
-        </div>
-      </div>
-
-      <AppSection title="相关订单" description="按商品名匹配的历史订单">
-        <AppEmpty v-if="orders.length === 0" title="还没有相关订单" description="创建订单并把该商品加进去。" />
-        <el-table v-else :data="orders" row-key="id" @row-click="openOrder">
-          <el-table-column label="订单号" min-width="160">
-            <template #default="{ row }">{{ row.orderNo ?? '—' }}</template>
-          </el-table-column>
-          <el-table-column label="下单日期" min-width="120">
-            <template #default="{ row }">
-              <AppDate :value="row.orderedAt" />
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" min-width="140">
-            <template #default="{ row }">
-              <AppStatusTag :status="row.displayStatus" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="件数" width="80">
-            <template #default="{ row }">{{ row.itemCount }}</template>
-          </el-table-column>
-          <el-table-column label="订单总额" min-width="140">
-            <template #default="{ row }">
-              <AppCurrency :amount="row.totalAmount" :currency="row.currency" />
-            </template>
-          </el-table-column>
-          <el-table-column label="净支出" min-width="140">
-            <template #default="{ row }">
-              <AppCurrency :amount="row.paymentSummary.netPaidAmount" :currency="row.currency" />
-            </template>
-          </el-table-column>
-        </el-table>
-      </AppSection>
-    </template>
-    <AppEmpty v-else title="商品不存在" description="它可能已被删除或归档。" action-text="返回商品库" @action="router.push('/products')" />
+      </template>
+      <AppEmpty v-else title="商品不存在" description="它可能已被删除或归档。" action-text="返回商品库" @action="router.push('/products')" />
+    </AppQueryState>
   </div>
 </template>
 

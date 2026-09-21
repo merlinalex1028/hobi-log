@@ -5,7 +5,7 @@ import AppEmpty from '@/components/common/AppEmpty.vue'
 import type { FuturePaymentVo } from '@/types/models'
 import { buildFuturePaymentOption } from '@/utils/chart'
 
-const props = defineProps<{ rows: FuturePaymentVo[] }>()
+const props = withDefaults(defineProps<{ rows: FuturePaymentVo[]; height?: string }>(), { height: '300px' })
 
 const option = computed(() => buildFuturePaymentOption(props.rows))
 </script>
@@ -16,5 +16,5 @@ const option = computed(() => buildFuturePaymentOption(props.rows))
     title="没有未来的付款计划"
     description="待付款节点会按月份显示在这里。"
   />
-  <AppChart v-else :option="option" height="300px" />
+  <AppChart v-else :option="option" :height="props.height" />
 </template>

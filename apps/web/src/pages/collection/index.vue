@@ -8,7 +8,7 @@ import CollectionFilterBar from '@/components/collection/CollectionFilterBar.vue
 import CollectionGrid from '@/components/collection/CollectionGrid.vue'
 import CollectionStats from '@/components/collection/CollectionStats.vue'
 import AppEmpty from '@/components/common/AppEmpty.vue'
-import AppErrorState from '@/components/common/AppErrorState.vue'
+import AppQueryState from '@/components/common/AppQueryState.vue'
 import AppPageHeader from '@/components/common/AppPageHeader.vue'
 import {
   DEFAULT_COLLECTION_FILTER,
@@ -69,35 +69,35 @@ function openOrder(orderId: string): void {
 
     <CollectionFilterBar v-model="filter" @reset="resetFilter" />
 
-    <AppErrorState v-if="isError" @retry="retry" />
-    <el-skeleton v-else-if="isLoading" :rows="6" />
-    <AppEmpty
-      v-else-if="allItems.length === 0"
-      title="还没有已入库的收藏"
-      description="订单全部签收后，商品会出现在这里。"
-      action-text="去看订单"
-      @action="router.push('/orders')"
-    />
-    <template v-else>
+    <AppQueryState :error="isError" :loading="isLoading" :rows="6" @retry="retry">
       <AppEmpty
-        v-if="items.length === 0"
-        title="当前页没有匹配的收藏"
-        description="试试清空筛选条件。"
-        action-text="重置筛选"
-        @action="resetFilter"
+        v-if="allItems.length === 0"
+        title="还没有已入库的收藏"
+        description="订单全部签收后，商品会出现在这里。"
+        action-text="去看订单"
+        @action="router.push('/orders')"
       />
-      <CollectionGrid v-else :items="items" @open="openOrder" />
+      <template v-else>
+        <AppEmpty
+          v-if="items.length === 0"
+          title="当前页没有匹配的收藏"
+          description="试试清空筛选条件。"
+          action-text="重置筛选"
+          @action="resetFilter"
+        />
+        <CollectionGrid v-else :items="items" @open="openOrder" />
 
-      <el-pagination
-        v-if="total > pageSize"
-        class="collection-pagination"
-        layout="prev, pager, next, total"
-        :current-page="page"
-        :page-size="pageSize"
-        :total="total"
-        @current-change="onPageChange"
-      />
-    </template>
+        <el-pagination
+          v-if="total > pageSize"
+          class="collection-pagination"
+          layout="prev, pager, next, total"
+          :current-page="page"
+          :page-size="pageSize"
+          :total="total"
+          @current-change="onPageChange"
+        />
+      </template>
+    </AppQueryState>
   </div>
 </template>
 
