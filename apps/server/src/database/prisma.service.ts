@@ -9,6 +9,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     super({
       adapter: new PrismaPg({
         connectionString: config.get<string>('DATABASE_URL') as string,
+        max: 5,
+        idleTimeoutMillis: 10_000,
+        connectionTimeoutMillis: 15_000,
       }),
     })
   }
