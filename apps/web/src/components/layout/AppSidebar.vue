@@ -22,7 +22,15 @@ const active = computed(() => menus.find(menu => route.path.startsWith(menu.path
 
 <template>
   <aside class="app-sidebar" :class="{ 'is-collapsed': props.collapsed }">
-    <div class="app-sidebar__brand" @click="emit('toggle')">HobiLog</div>
+    <button
+      type="button"
+      class="app-sidebar__brand"
+      :aria-label="props.collapsed ? '展开侧边栏' : '收起侧边栏'"
+      @click="emit('toggle')"
+    >
+      <img class="app-sidebar__brand-mark" src="/brand/hobilog-mark.png" alt="" />
+      <span v-if="!props.collapsed">HobiLog</span>
+    </button>
     <nav>
       <RouterLink
         v-for="menu in menus"
@@ -42,8 +50,9 @@ const active = computed(() => menus.find(menu => route.path.startsWith(menu.path
   width: var(--sidebar-width);
   flex-shrink: 0;
   border-right: 1px solid var(--border-color);
-  background: var(--card-bg);
+  background: var(--cocoa-900);
   padding: 16px 12px;
+  color: var(--vanilla-50);
 }
 
 .app-sidebar.is-collapsed {
@@ -51,10 +60,37 @@ const active = computed(() => menus.find(menu => route.path.startsWith(menu.path
 }
 
 .app-sidebar__brand {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-weight: 600;
   padding: 8px 12px 20px;
   cursor: pointer;
   user-select: none;
+  border: 0;
+  background: transparent;
+  color: var(--vanilla-50);
+  font: inherit;
+  text-align: left;
+}
+
+.app-sidebar__brand:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--butter-500);
+  outline-offset: 2px;
+}
+
+.app-sidebar__brand-mark {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.app-sidebar.is-collapsed .app-sidebar__brand {
+  justify-content: center;
+  padding-inline: 0;
 }
 
 nav {
@@ -66,17 +102,19 @@ nav {
 a {
   padding: 8px 12px;
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  color: rgb(255 243 211 / 72%);
   text-decoration: none;
+  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease;
 }
 
 a:hover {
-  background: var(--page-bg);
+  background: rgb(246 200 95 / 14%);
+  color: var(--vanilla-50);
 }
 
 a.is-active {
-  background: #eef0ff;
-  color: var(--el-color-primary);
+  background: var(--butter-500);
+  color: var(--cocoa-900);
   font-weight: 600;
 }
 </style>

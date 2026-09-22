@@ -162,7 +162,7 @@ function submit(): void {
 
 .platform-list__item.is-active {
   border-color: var(--el-color-primary);
-  background: #eef0ff;
+  background: var(--color-primary-soft);
 }
 
 .platform-list__select {

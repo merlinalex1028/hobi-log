@@ -16,7 +16,7 @@ body {
   background: var(--page-bg);
   color: var(--text-primary);
   font-family:
-    'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+    'Nunito', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
   font-size: 14px;
 }
 
@@ -25,6 +25,7 @@ body {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: 16px 20px;
+  box-shadow: var(--shadow-soft);
 }
 
 .text-secondary {
