@@ -37,6 +37,24 @@ describe('UserProfileService.ensureProfile', () => {
     await expect(service.ensureProfile({ id: 'u3' })).resolves.toEqual({ id: 'u3' })
   })
 
+  it('并发请求共享一次建档查询', async () => {
+    let resolveFind: ((value: { id: string }) => void) | undefined
+    const findUnique = vi.fn().mockImplementation(
+      () => new Promise<{ id: string }>(resolve => {
+        resolveFind = resolve
+      }),
+    )
+    const prisma = { userProfile: { findUnique, create: vi.fn() } }
+    const service = new UserProfileService(prisma as never)
+
+    const first = service.ensureProfile({ id: 'u5' })
+    const second = service.ensureProfile({ id: 'u5' })
+    expect(findUnique).toHaveBeenCalledTimes(1)
+    resolveFind?.({ id: 'u5' })
+
+    await expect(Promise.all([first, second])).resolves.toEqual([{ id: 'u5' }, { id: 'u5' }])
+  })
+
   it('非 P2002 错误继续抛出', async () => {
     const boom = Object.assign(new Error('boom'), { code: 'P1001' })
     const prisma = {

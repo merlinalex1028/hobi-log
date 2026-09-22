@@ -24,10 +24,25 @@ export class SupabaseService {
   }
 
   async getUserFromToken(token: string): Promise<AuthUser> {
-    const { data, error } = await this.authClient.auth.getUser(token)
-    if (error || !data.user) {
+    let result: Awaited<ReturnType<SupabaseClient['auth']['getClaims']>>
+    try {
+      result = await this.authClient.auth.getClaims(token)
+    } catch {
+      throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, 'AUTH_SERVICE_UNAVAILABLE', '认证服务暂时不可用')
+    }
+
+    if (result.error) {
+      if (result.error.status === HttpStatus.UNAUTHORIZED || ['bad_jwt', 'invalid_jwt'].includes(result.error.code ?? '')) {
+        throw new BusinessException(HttpStatus.UNAUTHORIZED, 'UNAUTHORIZED', '令牌无效或已过期')
+      }
+      throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, 'AUTH_SERVICE_UNAVAILABLE', '认证服务暂时不可用')
+    }
+
+    const claims = result.data?.claims
+    if (!claims || typeof claims.sub !== 'string') {
       throw new BusinessException(HttpStatus.UNAUTHORIZED, 'UNAUTHORIZED', '令牌无效或已过期')
     }
-    return data.user.email ? { id: data.user.id, email: data.user.email } : { id: data.user.id }
+
+    return typeof claims.email === 'string' ? { id: claims.sub, email: claims.email } : { id: claims.sub }
   }
 }

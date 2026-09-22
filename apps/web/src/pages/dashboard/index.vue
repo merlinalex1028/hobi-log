@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { useRouter } from 'vue-router'
-import { getTodos } from '@/api/notification.api'
 import { queryKeys } from '@/api/query-keys'
 import { getDashboard } from '@/api/statistics.api'
 import AppQueryState from '@/components/common/AppQueryState.vue'
@@ -25,9 +24,7 @@ const {
   refetch,
 } = useQuery({ queryKey: queryKeys.dashboard, queryFn: getDashboard })
 
-const { data: todos } = useQuery({ queryKey: queryKeys.notifications, queryFn: getTodos })
-
-const todoCount = computed(() => todos.value?.length ?? dashboard.value?.todos.length ?? 0)
+const todoCount = computed(() => dashboard.value?.todos.length ?? 0)
 
 async function retry(): Promise<void> {
   await refetch()

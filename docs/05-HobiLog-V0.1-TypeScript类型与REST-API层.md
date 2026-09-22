@@ -133,6 +133,8 @@ http.interceptors.request.use(async config => {
 })
 ```
 
+响应为 401 时，客户端先调用 `supabase.auth.refreshSession()` 刷新访问令牌，并仅对原请求重试一次；刷新失败或重试仍为 401 时才清理登录态并跳转登录页。并发 401 共用同一次刷新操作，避免多个请求互相覆盖令牌。
+
 ## 7. Error Body
 
 ```json
@@ -150,6 +152,16 @@ Prisma 及底层 `pg` 连接中断、连接超时统一返回 HTTP 503：
   "statusCode": 503,
   "code": "DATABASE_UNAVAILABLE",
   "message": "数据库连接不可用"
+}
+```
+
+Supabase 认证服务暂时不可用时也返回 HTTP 503，不应被客户端当作登录失效：
+
+```json
+{
+  "statusCode": 503,
+  "code": "AUTH_SERVICE_UNAVAILABLE",
+  "message": "认证服务暂时不可用"
 }
 ```
 

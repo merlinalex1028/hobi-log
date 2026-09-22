@@ -3,7 +3,6 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import DashboardPage from './index.vue'
-import { getTodos } from '@/api/notification.api'
 import { getDashboard } from '@/api/statistics.api'
 import AppErrorState from '@/components/common/AppErrorState.vue'
 import type { DashboardVo } from '@/types/models'
@@ -13,10 +12,8 @@ const routerMock = vi.hoisted(() => ({ push: vi.fn() }))
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: routerMock.push }) }))
 vi.mock('@/api/statistics.api', () => ({ getDashboard: vi.fn() }))
-vi.mock('@/api/notification.api', () => ({ getTodos: vi.fn() }))
 
 const mockedDashboard = vi.mocked(getDashboard)
-const mockedTodos = vi.mocked(getTodos)
 
 function dashboard(overrides: Partial<DashboardVo> = {}): DashboardVo {
   return {
@@ -71,16 +68,13 @@ describe('首页 Dashboard', () => {
   beforeEach(() => {
     routerMock.push.mockReset()
     mockedDashboard.mockReset()
-    mockedTodos.mockReset()
     mockedDashboard.mockResolvedValue(dashboard())
-    mockedTodos.mockResolvedValue([])
   })
 
-  it('加载 dashboard 与待办提醒', async () => {
+  it('加载 dashboard 数据', async () => {
     mountPage()
     await flushPromises()
     expect(mockedDashboard).toHaveBeenCalledTimes(1)
-    expect(mockedTodos).toHaveBeenCalledTimes(1)
   })
 
   it('渲染 KPI、待办与各面板', async () => {

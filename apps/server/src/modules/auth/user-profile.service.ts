@@ -4,9 +4,22 @@ import type { AuthUser } from './auth.types'
 
 @Injectable()
 export class UserProfileService {
+  private readonly pendingProfiles = new Map<string, Promise<{ id: string }>>()
+
   constructor(private readonly prisma: PrismaService) {}
 
   async ensureProfile(user: AuthUser): Promise<{ id: string }> {
+    const pending = this.pendingProfiles.get(user.id)
+    if (pending) return pending
+
+    const promise = this.ensureProfileInDatabase(user).finally(() => {
+      this.pendingProfiles.delete(user.id)
+    })
+    this.pendingProfiles.set(user.id, promise)
+    return promise
+  }
+
+  private async ensureProfileInDatabase(user: AuthUser): Promise<{ id: string }> {
     const existing = await this.prisma.userProfile.findUnique({
       where: { id: user.id },
       select: { id: true },

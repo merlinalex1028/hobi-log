@@ -5,12 +5,13 @@ vi.mock('@/lib/supabase', () => ({
   supabase: {
     auth: {
       getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'token-abc' } } }),
+      refreshSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'token-refreshed' } }, error: null }),
     },
   },
 }))
 
 import { supabase } from '@/lib/supabase'
-import { ApiError, http } from './http'
+import { ApiError, http, setUnauthorizedHandler } from './http'
 
 const originalAdapter = http.defaults.adapter
 
@@ -18,6 +19,10 @@ afterEach(() => {
   http.defaults.adapter = originalAdapter
   vi.mocked(supabase.auth.getSession).mockResolvedValue({
     data: { session: { access_token: 'token-abc' } },
+  } as never)
+  vi.mocked(supabase.auth.refreshSession).mockResolvedValue({
+    data: { session: { access_token: 'token-refreshed' } },
+    error: null,
   } as never)
 })
 
@@ -93,5 +98,55 @@ describe('http', () => {
       statusCode: 0,
       code: 'NETWORK_ERROR',
     })
+  })
+
+  it('401 时刷新 token 并重试原请求，不立即退出登录', async () => {
+    const unauthorizedHandler = vi.fn().mockResolvedValue(undefined)
+    setUnauthorizedHandler(unauthorizedHandler)
+    let attempts = 0
+    let retriedHeaders: Record<string, string> | undefined
+
+    http.defaults.adapter = (async (config: AxiosRequestConfig) => {
+      attempts += 1
+      if (attempts === 1) {
+        const response = {
+          data: { statusCode: 401, code: 'UNAUTHORIZED', message: '令牌无效或已过期' },
+          status: 401,
+          statusText: 'Unauthorized',
+          headers: {},
+          config,
+        } as AxiosResponse
+        throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config as never, undefined, response)
+      }
+      retriedHeaders = config.headers as Record<string, string>
+      return { data: { ok: true }, status: 200, statusText: 'OK', headers: {}, config } as AxiosResponse
+    }) as never
+
+    await expect(http.get('/orders')).resolves.toMatchObject({ data: { ok: true } })
+    expect(attempts).toBe(2)
+    expect(retriedHeaders?.Authorization).toBe('Bearer token-refreshed')
+    expect(vi.mocked(supabase.auth.refreshSession)).toHaveBeenCalledTimes(1)
+    expect(unauthorizedHandler).not.toHaveBeenCalled()
+  })
+
+  it('token 刷新失败后才触发退出登录', async () => {
+    const unauthorizedHandler = vi.fn().mockResolvedValue(undefined)
+    setUnauthorizedHandler(unauthorizedHandler)
+    vi.mocked(supabase.auth.refreshSession).mockResolvedValueOnce({
+      data: { session: null },
+      error: { message: 'refresh token expired' },
+    } as never)
+    stubAdapter(() => {
+      const response = {
+        data: { statusCode: 401, code: 'UNAUTHORIZED', message: '令牌无效或已过期' },
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: {},
+      } as AxiosResponse
+      return new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', undefined, undefined, response)
+    })
+
+    await expect(http.get('/orders')).rejects.toMatchObject({ statusCode: 401 })
+    expect(unauthorizedHandler).toHaveBeenCalledTimes(1)
   })
 })

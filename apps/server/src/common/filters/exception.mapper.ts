@@ -15,6 +15,7 @@ const PRISMA_CODE_MAP: Record<string, ErrorBody> = {
 const DATABASE_ERROR_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'])
 const DATABASE_ERROR_MESSAGES = [
   'Connection terminated unexpectedly',
+  'Connection terminated due to connection timeout',
   'timeout exceeded when trying to connect',
 ]
 
